@@ -41,6 +41,7 @@ import { BillingDisplay } from '@/components/models/BillingDisplay';
 import { ModelProviderBillingFields } from '@/components/models/ModelProviderBillingFields';
 import { toast } from 'sonner';
 import { getModelProviderPricingHistory } from '@/lib/api';
+import { getPriceHistoryFormValues } from '@/lib/modelProviderPricingHistory';
 import { useProviderModels } from '@/lib/hooks';
 import { getProviderProtocolLabel, useProviderProtocolConfigs } from '@/lib/providerProtocols';
 import {
@@ -319,35 +320,16 @@ export function ModelProviderForm({
   };
 
   const applyPriceHistory = (item: ModelProviderPricingHistoryItem) => {
-    const resolvedBillingMode = (item.billing_mode || 'token_flat') as FormData['billing_mode'];
-    setValue('billing_mode', resolvedBillingMode);
-    if (resolvedBillingMode === 'per_request') {
-      setValue('per_request_price', String(item.per_request_price ?? 0));
-      return;
-    }
-    if (resolvedBillingMode === 'per_image') {
-      setValue('per_image_price', String(item.per_image_price ?? 0));
-      return;
-    }
-    if (resolvedBillingMode === 'token_tiered') {
-      const tiers =
-        item.tiered_pricing && item.tiered_pricing.length > 0
-          ? item.tiered_pricing.map((tier) => ({
-              max_input_tokens:
-                tier.max_input_tokens === null || tier.max_input_tokens === undefined
-                  ? ''
-                  : String(tier.max_input_tokens),
-              input_price: String(tier.input_price ?? 0),
-              output_price: String(tier.output_price ?? 0),
-              cached_input_price: '',
-              cached_output_price: '',
-            }))
-          : [{ max_input_tokens: '', input_price: '0', output_price: '0', cached_input_price: '', cached_output_price: '' }];
-      setValue('tiers', tiers);
-      return;
-    }
-    setValue('input_price', String(item.input_price ?? 0));
-    setValue('output_price', String(item.output_price ?? 0));
+    const formValues = getPriceHistoryFormValues(item);
+    setValue('billing_mode', formValues.billing_mode as FormData['billing_mode']);
+    setValue('input_price', formValues.input_price);
+    setValue('output_price', formValues.output_price);
+    setValue('per_request_price', formValues.per_request_price);
+    setValue('per_image_price', formValues.per_image_price);
+    setValue('tiers', formValues.tiers);
+    setValue('cache_billing_enabled', formValues.cache_billing_enabled);
+    setValue('cached_input_price', formValues.cached_input_price);
+    setValue('cached_output_price', formValues.cached_output_price);
   };
 
   const handleLoadPriceHistory = async () => {
