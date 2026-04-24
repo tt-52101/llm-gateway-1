@@ -128,7 +128,7 @@ function ModelDetailContent() {
   };
 
   const handlePrioritizeMapping = async (mapping: ModelMappingProvider) => {
-    if (!model.providers || model.providers.length === 0 || model.strategy !== 'priority') {
+    if (!model || !model.providers || model.providers.length === 0 || model.strategy !== 'priority') {
       return;
     }
 
