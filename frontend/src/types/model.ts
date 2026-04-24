@@ -9,6 +9,7 @@ import { ProtocolType } from './provider';
 /** Selection Strategy Type */
 export type SelectionStrategy = 'round_robin' | 'cost_first' | 'priority';
 export type ModelType = 'chat' | 'speech' | 'transcription' | 'embedding' | 'images';
+export type ModelListSortBy = 'requested_model_asc' | 'requested_model_desc';
 
 /** Model Mapping Entity */
 export interface ModelMapping {
@@ -210,6 +211,7 @@ export interface ModelListParams {
   target_model_name?: string;
   model_type?: ModelType;
   strategy?: SelectionStrategy;
+  sort_by?: ModelListSortBy;
 }
 
 /** Model-Provider Mapping List Query Params */

@@ -242,6 +242,7 @@ class ModelService:
         target_model_name: Optional[str] = None,
         model_type: Optional[str] = None,
         strategy: Optional[str] = None,
+        sort_by: Optional[str] = None,
     ) -> tuple[list[ModelMappingResponse], int]:
         """
         Get Model Mapping List
@@ -265,7 +266,8 @@ class ModelService:
             requested_model=requested_model,
             target_model_name=target_model_name,
             model_type=model_type,
-            strategy=strategy
+            strategy=strategy,
+            sort_by=sort_by,
         )
         
         responses = []
