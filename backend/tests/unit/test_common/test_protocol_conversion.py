@@ -220,6 +220,124 @@ def test_convert_request_openai_to_deepseek_preserves_explicit_thinking_type():
     assert out_body["thinking"] == {"type": "disabled"}
 
 
+def test_convert_request_openai_to_moonshot_uses_deepseek_thinking_handling():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="moonshot",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "high"},
+        },
+        target_model="kimi-k2",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert out_body["model"] == "kimi-k2"
+    assert "reasoning" not in out_body
+    assert "output_config" not in out_body
+    assert out_body["thinking"] == {"type": "enabled"}
+
+
+def test_convert_request_openai_to_zhipu_uses_deepseek_thinking_handling():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="zhipu",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "high"},
+        },
+        target_model="glm-4.5",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert out_body["model"] == "glm-4.5"
+    assert "reasoning" not in out_body
+    assert "output_config" not in out_body
+    assert out_body["thinking"] == {"type": "enabled"}
+
+
+def test_convert_request_openai_to_aliyun_maps_reasoning_effort_to_enable_thinking():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="aliyun",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "high"},
+        },
+        target_model="qwen3-max",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert out_body["model"] == "qwen3-max"
+    assert "reasoning" not in out_body
+    assert "thinking" not in out_body
+    assert "output_config" not in out_body
+    assert out_body["enable_thinking"] is True
+
+
+def test_convert_request_openai_to_aliyun_maps_reasoning_none_to_disable_thinking():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="aliyun",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "none"},
+        },
+        target_model="qwen3-max",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert "reasoning" not in out_body
+    assert out_body["enable_thinking"] is False
+
+
+def test_convert_request_openai_to_aliyun_preserves_explicit_enable_thinking():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="aliyun",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "high"},
+            "enable_thinking": False,
+        },
+        target_model="qwen3-max",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert "reasoning" not in out_body
+    assert out_body["enable_thinking"] is False
+
+
+def test_convert_request_openai_to_ark_uses_deepseek_thinking_handling():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="ark",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "none"},
+        },
+        target_model="doubao-seed-1-6",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert out_body["model"] == "doubao-seed-1-6"
+    assert "reasoning" not in out_body
+    assert "output_config" not in out_body
+    assert out_body["thinking"] == {"type": "disabled"}
+
+
 def test_convert_request_openai_completion_to_anthropic_maps_reasoning_effort():
     path, out_body = convert_request_for_supplier(
         request_protocol="openai",
