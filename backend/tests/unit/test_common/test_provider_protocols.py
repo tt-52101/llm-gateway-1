@@ -48,7 +48,7 @@ def test_zhipu_frontend_protocol_config_uses_glm_label():
     assert config.frontend == ZHIPU_PROTOCOL
     assert config.implementation == "openai"
     assert config.base_url == "https://open.bigmodel.cn/api/paas/v4"
-    assert config.label == "GLM"
+    assert config.label == "GLM (OpenAI)"
 
 
 def test_zhipu_uses_deepseek_compatible_thinking():
@@ -60,7 +60,7 @@ def test_aliyun_frontend_protocol_config_uses_dashscope_label():
     assert config.frontend == ALIYUN_PROTOCOL
     assert config.implementation == "openai"
     assert config.base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert config.label == "Dashscope"
+    assert config.label == "Dashscope (OpenAI)"
 
 
 def test_aliyun_uses_dashscope_thinking():
@@ -72,7 +72,7 @@ def test_moonshot_frontend_protocol_config_uses_kimi_label():
     assert config.frontend == MOONSHOT_PROTOCOL
     assert config.implementation == "openai"
     assert config.base_url == "https://api.moonshot.cn/v1"
-    assert config.label == "Kimi"
+    assert config.label == "Kimi (OpenAI)"
 
 
 def test_moonshot_uses_deepseek_compatible_thinking():
@@ -84,7 +84,7 @@ def test_ark_frontend_protocol_config_exists():
     assert config.frontend == ARK_PROTOCOL
     assert config.implementation == "openai"
     assert config.base_url == "https://ark.cn-beijing.volces.com/api/v3"
-    assert config.label == "Ark"
+    assert config.label == "Ark (OpenAI)"
 
 
 def test_ark_uses_deepseek_compatible_thinking():

@@ -69,25 +69,25 @@ FRONTEND_PROTOCOL_CONFIGS: dict[str, ProtocolConfig] = {
         frontend=ZHIPU_PROTOCOL,
         implementation=OPENAI_PROTOCOL,
         base_url="https://open.bigmodel.cn/api/paas/v4",
-        label="GLM",
+        label="GLM (OpenAI)",
     ),
     ALIYUN_PROTOCOL: ProtocolConfig(
         frontend=ALIYUN_PROTOCOL,
         implementation=OPENAI_PROTOCOL,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        label="Dashscope",
+        label="Dashscope (OpenAI)",
     ),
     MOONSHOT_PROTOCOL: ProtocolConfig(
         frontend=MOONSHOT_PROTOCOL,
         implementation=OPENAI_PROTOCOL,
         base_url="https://api.moonshot.cn/v1",
-        label="Kimi",
+        label="Kimi (OpenAI)",
     ),
     ARK_PROTOCOL: ProtocolConfig(
         frontend=ARK_PROTOCOL,
         implementation=OPENAI_PROTOCOL,
         base_url="https://ark.cn-beijing.volces.com/api/v3",
-        label="Ark",
+        label="Ark (OpenAI)",
     ),
 }
 
