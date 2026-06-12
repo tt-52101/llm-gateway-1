@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from app.common.protocol import sanitize_gemini_request_body
+from app.common.protocol import (
+    sanitize_anthropic_tool_schema,
+    sanitize_anthropic_tools,
+    sanitize_gemini_request_body,
+)
 from app.common.protocol_conversion import (
     convert_request_for_supplier,
     convert_response_for_user,
@@ -217,6 +221,124 @@ def test_convert_request_openai_to_deepseek_preserves_explicit_thinking_type():
 
     assert path == "/v1/chat/completions"
     assert "reasoning" not in out_body
+    assert out_body["thinking"] == {"type": "disabled"}
+
+
+def test_convert_request_openai_to_moonshot_uses_deepseek_thinking_handling():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="moonshot",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "high"},
+        },
+        target_model="kimi-k2",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert out_body["model"] == "kimi-k2"
+    assert "reasoning" not in out_body
+    assert "output_config" not in out_body
+    assert out_body["thinking"] == {"type": "enabled"}
+
+
+def test_convert_request_openai_to_zhipu_uses_deepseek_thinking_handling():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="zhipu",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "high"},
+        },
+        target_model="glm-4.5",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert out_body["model"] == "glm-4.5"
+    assert "reasoning" not in out_body
+    assert "output_config" not in out_body
+    assert out_body["thinking"] == {"type": "enabled"}
+
+
+def test_convert_request_openai_to_aliyun_maps_reasoning_effort_to_enable_thinking():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="aliyun",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "high"},
+        },
+        target_model="qwen3-max",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert out_body["model"] == "qwen3-max"
+    assert "reasoning" not in out_body
+    assert "thinking" not in out_body
+    assert "output_config" not in out_body
+    assert out_body["enable_thinking"] is True
+
+
+def test_convert_request_openai_to_aliyun_maps_reasoning_none_to_disable_thinking():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="aliyun",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "none"},
+        },
+        target_model="qwen3-max",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert "reasoning" not in out_body
+    assert out_body["enable_thinking"] is False
+
+
+def test_convert_request_openai_to_aliyun_preserves_explicit_enable_thinking():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="aliyun",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "high"},
+            "enable_thinking": False,
+        },
+        target_model="qwen3-max",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert "reasoning" not in out_body
+    assert out_body["enable_thinking"] is False
+
+
+def test_convert_request_openai_to_ark_uses_deepseek_thinking_handling():
+    path, out_body = convert_request_for_supplier(
+        request_protocol="openai",
+        supplier_protocol="ark",
+        path="/v1/chat/completions",
+        body={
+            "model": "any",
+            "messages": [{"role": "user", "content": "Hi"}],
+            "reasoning": {"effort": "none"},
+        },
+        target_model="doubao-seed-1-6",
+    )
+
+    assert path == "/v1/chat/completions"
+    assert out_body["model"] == "doubao-seed-1-6"
+    assert "reasoning" not in out_body
+    assert "output_config" not in out_body
     assert out_body["thinking"] == {"type": "disabled"}
 
 
@@ -1866,3 +1988,103 @@ def test_convert_response_gemini_to_anthropic():
     assert isinstance(converted["content"], list)
     assert converted["content"][0]["type"] == "text"
     assert "Hello from Gemini" in converted["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Anthropic tool-schema sanitization (top-level anyOf/oneOf/allOf)
+# ---------------------------------------------------------------------------
+
+
+def _share_artifact_schema():
+    """The real schema from the Osaurus `share_artifact` tool that triggered the
+    Anthropic 400 (top-level anyOf)."""
+    return {
+        "additionalProperties": False,
+        "anyOf": [
+            {"required": ["path"]},
+            {"required": ["content", "filename"]},
+        ],
+        "properties": {
+            "content": {"type": "string"},
+            "path": {"type": "string"},
+            "filename": {"type": "string"},
+        },
+        "required": [],
+        "type": "object",
+    }
+
+
+def test_sanitize_anthropic_tool_schema_strips_top_level_anyof():
+    schema = _share_artifact_schema()
+    out = sanitize_anthropic_tool_schema(schema)
+
+    assert "anyOf" not in out
+    assert "oneOf" not in out
+    assert "allOf" not in out
+    assert out["type"] == "object"
+    assert out["required"] == []
+    # all branch + top-level properties survive
+    assert set(out["properties"]) >= {"content", "path", "filename"}
+    # input is not mutated
+    assert "anyOf" in schema
+
+
+def test_sanitize_anthropic_tool_schema_merges_branch_properties():
+    schema = {
+        "type": "object",
+        "properties": {"a": {"type": "string"}},
+        "oneOf": [
+            {"properties": {"b": {"type": "integer"}}, "required": ["b"]},
+            {"properties": {"c": {"type": "boolean"}}},
+        ],
+    }
+    out = sanitize_anthropic_tool_schema(schema)
+    assert set(out["properties"]) == {"a", "b", "c"}
+    assert out["required"] == []
+    assert "oneOf" not in out
+
+
+def test_sanitize_anthropic_tool_schema_preserves_nested_combinators():
+    schema = {
+        "type": "object",
+        "properties": {
+            "x": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+        },
+    }
+    out = sanitize_anthropic_tool_schema(schema)
+    # nested anyOf is valid for Anthropic and must be left intact
+    assert "anyOf" in out["properties"]["x"]
+
+
+def test_sanitize_anthropic_tool_schema_noop_without_combinators():
+    schema = {"type": "object", "properties": {"a": {"type": "string"}}}
+    out = sanitize_anthropic_tool_schema(schema)
+    assert out == schema
+
+
+def test_sanitize_anthropic_tools_end_to_end():
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "share_artifact",
+                "parameters": _share_artifact_schema(),
+            },
+        }
+    ]
+    out = sanitize_anthropic_tools(tools)
+    params = out[0]["function"]["parameters"]
+    assert "anyOf" not in json.dumps(params)
+    # original untouched
+    assert "anyOf" in tools[0]["function"]["parameters"]
+
+
+def test_sanitize_anthropic_tools_skips_malformed_entries():
+    tools = [
+        "not-a-dict",
+        {"type": "function"},  # no function dict
+        {"type": "function", "function": {"name": "x"}},  # no parameters
+    ]
+    # must not raise
+    out = sanitize_anthropic_tools(tools)
+    assert len(out) == 3

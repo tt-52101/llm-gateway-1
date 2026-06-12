@@ -132,6 +132,10 @@ class TestURLValidationStrict:
         result = validate_provider_url_strict("https://api.deepseek.com")
         assert result == "https://api.deepseek.com"
 
+    def test_ark_allowed(self):
+        result = validate_provider_url_strict("https://ark.cn-beijing.volces.com/api/v3")
+        assert result == "https://ark.cn-beijing.volces.com/api/v3"
+
     def test_unknown_domain_blocked(self):
         with pytest.raises(ValidationError) as exc_info:
             validate_provider_url_strict("https://unknown-api.example.com")

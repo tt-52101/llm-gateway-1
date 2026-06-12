@@ -13,6 +13,17 @@ OPENAI_RESPONSES_PROTOCOL = "openai_responses"
 ANTHROPIC_PROTOCOL = "anthropic"
 GEMINI_PROTOCOL = "gemini"
 DEEPSEEK_PROTOCOL = "deepseek"
+ZHIPU_PROTOCOL = "zhipu"
+MOONSHOT_PROTOCOL = "moonshot"
+ALIYUN_PROTOCOL = "aliyun"
+ARK_PROTOCOL = "ark"
+DEEPSEEK_COMPATIBLE_THINKING_PROTOCOLS = (
+    DEEPSEEK_PROTOCOL,
+    ZHIPU_PROTOCOL,
+    MOONSHOT_PROTOCOL,
+    ARK_PROTOCOL,
+)
+DASHSCOPE_THINKING_PROTOCOLS = (ALIYUN_PROTOCOL,)
 
 
 @dataclass(frozen=True)
@@ -54,23 +65,29 @@ FRONTEND_PROTOCOL_CONFIGS: dict[str, ProtocolConfig] = {
         base_url="https://api.deepseek.com",
         label="DeepSeek (OpenAI)",
     ),
-    "zhipu": ProtocolConfig(
-        frontend="zhipu",
+    ZHIPU_PROTOCOL: ProtocolConfig(
+        frontend=ZHIPU_PROTOCOL,
         implementation=OPENAI_PROTOCOL,
         base_url="https://open.bigmodel.cn/api/paas/v4",
-        label="Zhipu (OpenAI)",
+        label="GLM (OpenAI)",
     ),
-    "aliyun": ProtocolConfig(
-        frontend="aliyun",
+    ALIYUN_PROTOCOL: ProtocolConfig(
+        frontend=ALIYUN_PROTOCOL,
         implementation=OPENAI_PROTOCOL,
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        label="Aliyun (OpenAI)",
+        label="Dashscope (OpenAI)",
     ),
-    "moonshot": ProtocolConfig(
-        frontend="moonshot",
+    MOONSHOT_PROTOCOL: ProtocolConfig(
+        frontend=MOONSHOT_PROTOCOL,
         implementation=OPENAI_PROTOCOL,
         base_url="https://api.moonshot.cn/v1",
-        label="Moonshot (OpenAI)",
+        label="Kimi (OpenAI)",
+    ),
+    ARK_PROTOCOL: ProtocolConfig(
+        frontend=ARK_PROTOCOL,
+        implementation=OPENAI_PROTOCOL,
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+        label="Ark (OpenAI)",
     ),
 }
 
@@ -101,6 +118,14 @@ def get_frontend_protocol_config(protocol: str | None) -> ProtocolConfig:
 
 def resolve_implementation_protocol(protocol: str | None) -> str:
     return get_frontend_protocol_config(protocol).implementation
+
+
+def uses_deepseek_compatible_thinking(protocol: str | None) -> bool:
+    return normalize_frontend_protocol(protocol) in DEEPSEEK_COMPATIBLE_THINKING_PROTOCOLS
+
+
+def uses_dashscope_thinking(protocol: str | None) -> bool:
+    return normalize_frontend_protocol(protocol) in DASHSCOPE_THINKING_PROTOCOLS
 
 
 def list_frontend_protocol_configs() -> list[ProtocolConfig]:
