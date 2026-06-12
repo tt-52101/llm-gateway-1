@@ -67,6 +67,11 @@ def _anthropic_effort_from_body(body: dict[str, Any]) -> str | None:
     return _clean_anthropic_effort(output_config.get("effort"))
 
 
+def _dashscope_thinking_enabled_from_body(body: dict[str, Any]) -> bool | None:
+    enable_thinking = body.get("enable_thinking")
+    return enable_thinking if isinstance(enable_thinking, bool) else None
+
+
 def normalize_reasoning_for_openai(
     body: dict[str, Any],
     *,
@@ -164,5 +169,38 @@ def normalize_reasoning_for_deepseek(
             thinking = {}
         thinking["type"] = thinking_type
         out["thinking"] = thinking
+
+    return out
+
+
+def normalize_reasoning_for_dashscope(
+    body: dict[str, Any],
+    *,
+    source_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a Dashscope OpenAI-compatible body using `enable_thinking` only."""
+    out = copy.deepcopy(body)
+    source = source_body if isinstance(source_body, dict) else body
+
+    thinking_enabled = _dashscope_thinking_enabled_from_body(source)
+
+    thinking_type = _anthropic_thinking_type_from_body(source)
+    if thinking_enabled is None and thinking_type is not None:
+        thinking_enabled = thinking_type != "disabled"
+
+    openai_effort = _openai_effort_from_body(source)
+    if thinking_enabled is None and openai_effort is not None:
+        thinking_enabled = openai_effort != "none"
+
+    if thinking_enabled is None:
+        body_effort = _openai_effort_from_body(body)
+        if body_effort is not None:
+            thinking_enabled = body_effort != "none"
+
+    out.pop("reasoning", None)
+    out.pop("thinking", None)
+    out.pop("output_config", None)
+    if thinking_enabled is not None:
+        out["enable_thinking"] = thinking_enabled
 
     return out

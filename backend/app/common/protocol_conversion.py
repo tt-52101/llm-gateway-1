@@ -20,7 +20,10 @@ import logging
 from typing import Any, AsyncGenerator, Optional
 
 from app.common.errors import ServiceError
-from app.common.reasoning import normalize_reasoning_for_deepseek
+from app.common.reasoning import (
+    normalize_reasoning_for_dashscope,
+    normalize_reasoning_for_deepseek,
+)
 
 # Import from new modular architecture
 from app.common.protocol import (
@@ -43,12 +46,13 @@ from app.common.protocol import (
 )
 from app.common.provider_protocols import (
     ANTHROPIC_PROTOCOL,
-    DEEPSEEK_PROTOCOL,
     IMPLEMENTATION_PROTOCOLS,
     OPENAI_PROTOCOL,
     OPENAI_RESPONSES_PROTOCOL,
     normalize_frontend_protocol,
     resolve_implementation_protocol,
+    uses_dashscope_thinking,
+    uses_deepseek_compatible_thinking,
 )
 
 logger = logging.getLogger(__name__)
@@ -142,8 +146,13 @@ def convert_request_for_supplier(
         )
 
         converted_body = result.body
-        if supplier_frontend_protocol == DEEPSEEK_PROTOCOL:
+        if uses_deepseek_compatible_thinking(supplier_frontend_protocol):
             converted_body = normalize_reasoning_for_deepseek(
+                converted_body,
+                source_body=body,
+            )
+        elif uses_dashscope_thinking(supplier_frontend_protocol):
+            converted_body = normalize_reasoning_for_dashscope(
                 converted_body,
                 source_body=body,
             )
