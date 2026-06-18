@@ -81,6 +81,7 @@ async def _handle_proxy_request_with_body(
             ) = await service.process_request_stream(
                 api_key_id=api_key.id,
                 api_key_name=api_key.key_name,
+                record_details=api_key.record_details,
                 request_protocol="openai",
                 path=path,
                 request_url=str(request.url),
@@ -127,6 +128,7 @@ async def _handle_proxy_request_with_body(
         response, log_info = await service.process_request(
             api_key_id=api_key.id,
             api_key_name=api_key.key_name,
+            record_details=api_key.record_details,
             request_protocol="openai",
             path=path,
             request_url=str(request.url),
@@ -400,6 +402,7 @@ async def _handle_proxy_request_openai_responses(
             ) = await service.process_request_stream(
                 api_key_id=api_key.id,
                 api_key_name=api_key.key_name,
+                record_details=api_key.record_details,
                 request_protocol="openai_responses",
                 path=path,
                 request_url=str(request.url),
@@ -445,6 +448,7 @@ async def _handle_proxy_request_openai_responses(
         response, log_info = await service.process_request(
             api_key_id=api_key.id,
             api_key_name=api_key.key_name,
+            record_details=api_key.record_details,
             request_protocol="openai_responses",
             path=path,
             request_url=str(request.url),

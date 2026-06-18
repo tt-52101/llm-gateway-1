@@ -93,6 +93,25 @@ def _extract_user_id(headers: dict[str, str]) -> str | None:
     return None
 
 
+# Heavy request-detail payload fields suppressed when an API Key has detail
+# logging disabled. Main-table metadata plus usage_details/error_info are
+# always retained.
+_DETAIL_PAYLOAD_FIELDS = (
+    "request_body",
+    "response_body",
+    "request_headers",
+    "response_headers",
+    "converted_request_body",
+    "upstream_response_body",
+)
+
+
+def _strip_detail_payload(log_data: RequestLogCreate) -> None:
+    """Null out the heavy detail payload fields on a log entry in place."""
+    for field in _DETAIL_PAYLOAD_FIELDS:
+        setattr(log_data, field, None)
+
+
 class ProxyService:
     """
     Proxy Core Service
@@ -140,7 +159,16 @@ class ProxyService:
         self._priority_strategy = priority_strategy or PriorityStrategy()
         self._protocol_hooks = protocol_hooks or ProtocolConversionHooks()
 
-    async def _write_log(self, log_data: RequestLogCreate) -> None:
+    async def _write_log(
+        self, log_data: RequestLogCreate, record_details: bool = True
+    ) -> None:
+        # When detail logging is disabled for the API Key, drop the heavy payload
+        # fields (request/response bodies and headers). Main-table metadata
+        # (tokens, cost, timing, status, model, etc.) plus usage_details and
+        # error_info are always retained. Idempotent: callers may also strip
+        # earlier (e.g. before debug logging) so the payload never leaks.
+        if not record_details:
+            _strip_detail_payload(log_data)
         await self.log_repo.create(log_data)
 
     def _get_strategy(self, strategy_name: str) -> SelectionStrategy:
@@ -458,6 +486,7 @@ class ProxyService:
         body: dict[str, Any],
         *,
         force_parse_response: bool = False,
+        record_details: bool = True,
     ) -> tuple[ProviderResponse, dict[str, Any]]:
         """
         Process Proxy Request
@@ -632,7 +661,7 @@ class ProxyService:
                 ),
             )
             try:
-                await self._write_log(attempt_log)
+                await self._write_log(attempt_log, record_details=record_details)
                 failed_attempt_logged = True
             except Exception:
                 logger.exception(
@@ -985,6 +1014,11 @@ class ProxyService:
             ),
         )
 
+        # Strip detail payload before debug logging so a key with detail
+        # logging disabled never leaks bodies/headers into application logs.
+        if not record_details:
+            _strip_detail_payload(log_data)
+
         # DEBUG: Log request details
         try:
             logger.debug(f"Request Log: {log_data.model_dump_json()}")
@@ -993,7 +1027,7 @@ class ProxyService:
             logger.debug(f"Request Log: {log_data.json()}")
 
         if result.success or not failed_attempt_logged:
-            await self._write_log(log_data)
+            await self._write_log(log_data, record_details=record_details)
 
         return result.response, {
             "trace_id": trace_id,
@@ -1016,6 +1050,8 @@ class ProxyService:
         method: str,
         headers: dict[str, str],
         body: dict[str, Any],
+        *,
+        record_details: bool = True,
     ) -> tuple[ProviderResponse, AsyncGenerator[bytes, None], dict[str, Any]]:
         """
         Process Streaming Proxy Request
@@ -1406,7 +1442,7 @@ class ProxyService:
             )
             try:
                 with anyio.CancelScope(shield=True):
-                    await self._write_log(attempt_log)
+                    await self._write_log(attempt_log, record_details=record_details)
             except Exception:
                 pass
 
@@ -1633,6 +1669,11 @@ class ProxyService:
                     ),
                 )
 
+                # Strip detail payload before debug logging so a key with detail
+                # logging disabled never leaks bodies/headers into application logs.
+                if not record_details:
+                    _strip_detail_payload(log_data)
+
                 # DEBUG: Log request details
                 try:
                     logger.debug(f"Request Log: {log_data.model_dump_json()}")
@@ -1643,7 +1684,7 @@ class ProxyService:
                 # client disconnect triggers cancellation, use shield to ensure logs are written to DB
                 try:
                     with anyio.CancelScope(shield=True):
-                        await self._write_log(log_data)
+                        await self._write_log(log_data, record_details=record_details)
                 except Exception:
                     # Log writing failure does not affect main flow
                     pass

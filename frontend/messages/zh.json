@@ -133,7 +133,8 @@
       "status": {
         "active": "启用",
         "inactive": "停用"
-      }
+      },
+      "detailsOff": "明细已关闭"
     },
     "toasts": {
       "copied": "已复制 API Key 到剪贴板",
@@ -153,7 +154,9 @@
       "enabledStatusLabel": "启用状态",
       "autoGenerateHint": "API Key 将由系统自动生成，请在创建后立即保存",
       "keyNameLabel": "API Key 名称",
-      "keyLabel": "API Key"
+      "keyLabel": "API Key",
+      "recordDetailsLabel": "记录请求明细",
+      "recordDetailsHint": "关闭后，该 Key 的请求不再记录请求/响应体和请求头；Token、费用、状态等元数据仍会记录。"
     },
     "success": {
       "title": "API Key 创建成功",

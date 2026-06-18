@@ -39,16 +39,18 @@ class SQLAlchemyApiKeyRepository(ApiKeyRepository):
             key_name=entity.key_name,
             key_value=entity.key_value,
             is_active=entity.is_active,
+            record_details=entity.record_details,
             created_at=ensure_utc(entity.created_at),
             last_used_at=ensure_utc(entity.last_used_at),
         )
-    
+
     async def create(self, data: ApiKeyCreate, key_value: str) -> ApiKeyModel:
         """Create API Key"""
         entity = ApiKeyORM(
             key_name=data.key_name,
             key_value=key_value,
             is_active=True,
+            record_details=data.record_details,
         )
         self.session.add(entity)
         await self.session.commit()

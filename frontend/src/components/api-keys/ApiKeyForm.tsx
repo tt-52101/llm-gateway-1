@@ -43,6 +43,7 @@ interface ApiKeyFormProps {
 interface FormData {
   key_name: string;
   is_active: boolean;
+  record_details: boolean;
 }
 
 /**
@@ -74,10 +75,12 @@ export function ApiKeyForm({
     defaultValues: {
       key_name: '',
       is_active: true,
+      record_details: true,
     },
   });
 
   const isActive = useWatch({ control, name: 'is_active' });
+  const recordDetails = useWatch({ control, name: 'record_details' });
 
   // Fill form data in edit mode
   useEffect(() => {
@@ -85,11 +88,13 @@ export function ApiKeyForm({
       reset({
         key_name: apiKey.key_name,
         is_active: apiKey.is_active,
+        record_details: apiKey.record_details,
       });
     } else {
       reset({
         key_name: '',
         is_active: true,
+        record_details: true,
       });
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -102,10 +107,12 @@ export function ApiKeyForm({
       onSubmit({
         key_name: data.key_name,
         is_active: data.is_active,
+        record_details: data.record_details,
       });
     } else {
       onSubmit({
         key_name: data.key_name,
+        record_details: data.record_details,
       });
     }
   };
@@ -216,6 +223,21 @@ export function ApiKeyForm({
               />
             </div>
           )}
+
+          {/* Record request detail payload */}
+          <div className="flex items-center justify-between gap-4">
+            <div className="space-y-1">
+              <Label htmlFor="record_details">{t('form.recordDetailsLabel')}</Label>
+              <p className="text-xs text-muted-foreground">
+                {t('form.recordDetailsHint')}
+              </p>
+            </div>
+            <Switch
+              id="record_details"
+              checked={recordDetails}
+              onCheckedChange={(checked) => setValue('record_details', checked)}
+            />
+          </div>
 
           {!isEdit && (
             <p className="text-sm text-muted-foreground">

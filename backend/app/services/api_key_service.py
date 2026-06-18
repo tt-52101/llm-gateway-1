@@ -74,6 +74,7 @@ class ApiKeyService:
             key_name=api_key.key_name,
             key_value=api_key.key_value,  # Full display
             is_active=api_key.is_active,
+            record_details=api_key.record_details,
             created_at=api_key.created_at,
             last_used_at=api_key.last_used_at,
         )
@@ -253,6 +254,7 @@ class ApiKeyService:
             key_name=api_key.key_name,
             key_value=sanitize_api_key_display(api_key.key_value),
             is_active=api_key.is_active,
+            record_details=api_key.record_details,
             created_at=api_key.created_at,
             last_used_at=api_key.last_used_at,
         )

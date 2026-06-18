@@ -194,6 +194,12 @@ def _run_migrations(sync_conn) -> None:
             "remark": "remark TEXT",
         },
     )
+    ensure_columns(
+        "api_keys",
+        {
+            "record_details": "record_details BOOLEAN DEFAULT TRUE",
+        },
+    )
     _drop_request_logs_provider_fk(sync_conn, inspector)
 
     # Migrate existing request_logs data to request_log_details table
