@@ -169,14 +169,17 @@ export function ApiKeyList({
                 {formatUsdCompact(apiKey.monthly_cost)}
               </TableCell>
               <TableCell>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
                   <Badge className={status.className}>
                     {apiKey.is_active ? t('list.status.active') : t('list.status.inactive')}
                   </Badge>
                   {!apiKey.record_details && (
-                    <Badge variant="outline" className="text-muted-foreground">
-                      {t('list.detailsOff')}
-                    </Badge>
+                    <span
+                      className="inline-flex text-muted-foreground"
+                      title={t('list.detailsOff')}
+                    >
+                      <EyeOff className="h-3.5 w-3.5" suppressHydrationWarning />
+                    </span>
                   )}
                 </div>
               </TableCell>

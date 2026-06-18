@@ -577,6 +577,19 @@ export function LogDetail({ log }: LogDetailProps) {
   if (!log) return null;
 
   const detailExpired = log.detail_available === false;
+  // Whether any heavy payload (bodies/headers) is present. When an API Key has
+  // detail logging disabled, all of these are empty, so we hide the payload card
+  // and its empty request/response/header viewers entirely.
+  const hasHeaders = (headers?: Record<string, string>) =>
+    Boolean(headers && Object.keys(headers).length > 0);
+  const hasPayloadDetail = Boolean(
+    log.request_body ||
+      log.response_body ||
+      log.converted_request_body ||
+      log.upstream_response_body ||
+      hasHeaders(log.request_headers) ||
+      hasHeaders(log.response_headers),
+  );
   const retryUnsupported =
     detailExpired ||
     !log.request_path ||
@@ -937,6 +950,21 @@ export function LogDetail({ log }: LogDetailProps) {
         </Card>
       )}
 
+      {!hasPayloadDetail && !detailExpired && (
+        <Card>
+          <CardContent className="flex items-start gap-3 p-4 text-sm text-muted-foreground">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" suppressHydrationWarning />
+            <div className="space-y-1">
+              <div className="font-medium text-foreground">
+                {t("detail.detailNotRecordedTitle")}
+              </div>
+              <div>{t("detail.detailNotRecordedDescription")}</div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {hasPayloadDetail && (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div>
@@ -1280,6 +1308,7 @@ export function LogDetail({ log }: LogDetailProps) {
           )}
         </CardContent>
       </Card>
+      )}
 
       <Dialog open={debugDialogOpen} onOpenChange={setDebugDialogOpen}>
         <DialogContent className="h-[85vh] max-h-[85vh] w-[min(96vw,1100px)] max-w-none overflow-hidden p-0">

@@ -134,7 +134,7 @@
         "active": "Active",
         "inactive": "Inactive"
       },
-      "detailsOff": "Details off"
+      "detailsOff": "Request details not logged"
     },
     "toasts": {
       "copied": "API Key copied to clipboard",
@@ -156,7 +156,7 @@
       "keyNameLabel": "API Key Name",
       "keyLabel": "API Key",
       "recordDetailsLabel": "Record Request Details",
-      "recordDetailsHint": "When off, request/response bodies and headers are not logged for this key; metadata such as tokens, cost and status is still recorded."
+      "recordDetailsHint": "When off, request/response bodies and headers aren't logged; tokens and cost still are."
     },
     "success": {
       "title": "API Key Created Successfully",
@@ -764,6 +764,8 @@
       "retryUnsupported": "This log cannot be retried",
       "detailExpiredTitle": "Request detail expired",
       "detailExpiredDescription": "The summary fields are still retained, but the request body, headers, response body, and other heavy detail fields were cleaned up by retention policy.",
+      "detailNotRecordedTitle": "Request details not recorded",
+      "detailNotRecordedDescription": "This API Key has detail logging disabled, so request/response bodies and headers were not saved.",
       "detailExpiredRetryUnsupported": "Request detail has expired for this log, so retry is unavailable",
       "detailExpiredPlaygroundUnsupported": "Request detail has expired for this log, so Playground is unavailable",
       "detailExpiredCurlUnsupported": "Request detail has expired for this log, so cURL export is unavailable",
