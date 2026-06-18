@@ -268,6 +268,12 @@ class ApiKey(Base):
     key_value: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     # Is Active
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Whether to record request detail payload (bodies & headers) for this key.
+    # When False, request_log_details bodies/headers are not stored; main-table
+    # metadata (tokens, cost, timing, status, model, etc.) is always recorded.
+    record_details: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="1"
+    )
     # Creation Time
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=utc_now_naive, nullable=False
