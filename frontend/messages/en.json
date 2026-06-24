@@ -749,6 +749,28 @@
       "request": "Request",
       "response": "Response",
       "headers": "Headers",
+      "prompt": {
+        "tab": "Prompt",
+        "system": "System",
+        "parameters": "Parameters",
+        "messages": "Messages",
+        "tools": "Tools",
+        "toolsCount": "{count} tool(s)",
+        "toolCall": "Tool Call",
+        "toolResult": "Tool Result",
+        "arguments": "Arguments",
+        "schema": "Schema",
+        "showSchema": "Show schema",
+        "hideSchema": "Hide schema",
+        "image": "[image]",
+        "empty": "This request has no chat messages to display.",
+        "role": {
+          "system": "System",
+          "user": "User",
+          "assistant": "Assistant",
+          "tool": "Tool"
+        }
+      },
       "retry": "Retry",
       "retryConfirmTitle": "Confirm Retry",
       "retryConfirmDescription": "This will replay the original request recorded in the current log. Continue?",

@@ -749,6 +749,28 @@
       "request": "请求",
       "response": "响应",
       "headers": "请求头",
+      "prompt": {
+        "tab": "提示词",
+        "system": "系统提示",
+        "parameters": "参数",
+        "messages": "消息",
+        "tools": "工具",
+        "toolsCount": "{count} 个工具",
+        "toolCall": "工具调用",
+        "toolResult": "工具结果",
+        "arguments": "参数",
+        "schema": "Schema",
+        "showSchema": "展开 Schema",
+        "hideSchema": "收起 Schema",
+        "image": "[图片]",
+        "empty": "该请求没有可展示的对话消息。",
+        "role": {
+          "system": "系统",
+          "user": "用户",
+          "assistant": "助手",
+          "tool": "工具"
+        }
+      },
       "retry": "Retry",
       "retryConfirmTitle": "确认重试请求",
       "retryConfirmDescription": "将按照当前日志记录的原始请求再次发起一次调用，是否继续？",
