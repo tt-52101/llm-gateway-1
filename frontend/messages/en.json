@@ -320,6 +320,9 @@
         "urlPlaceholderNew": "socks5://user:pass@host:port",
         "urlPlaceholderEdit": "Leave blank to keep unchanged"
       },
+      "advanced": {
+        "label": "Advanced"
+      },
       "status": {
         "label": "Enabled Status"
       },
