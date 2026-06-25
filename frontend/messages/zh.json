@@ -320,6 +320,9 @@
         "urlPlaceholderNew": "socks5://user:pass@host:port",
         "urlPlaceholderEdit": "留空以保持不变"
       },
+      "advanced": {
+        "label": "高级"
+      },
       "status": {
         "label": "启用状态"
       },

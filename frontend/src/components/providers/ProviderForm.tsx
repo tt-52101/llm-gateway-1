@@ -8,7 +8,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useForm, useWatch } from 'react-hook-form';
 import { useTranslations } from 'next-intl';
-import { CircleHelp, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, CircleHelp, Plus, Trash2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -35,7 +35,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { Provider, ProviderCreate, ProviderUpdate, ProtocolType } from '@/types';
-import { isValidUrl, isNotEmpty } from '@/lib/utils';
+import { isValidUrl, isNotEmpty, cn } from '@/lib/utils';
 import {
   getProviderProtocolConfig,
   useProviderProtocolConfigs,
@@ -127,6 +127,7 @@ export function ProviderForm({
   const [defaultParameters, setDefaultParameters] = useState<
     { key: string; value: string }[]
   >([]);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const userHasEditedBaseUrl = useRef(false);
 
   // Add header
@@ -347,12 +348,16 @@ export function ProviderForm({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[500px]">
+      <DialogContent className="sm:max-w-[500px] max-h-[90vh] flex flex-col gap-4">
         <DialogHeader>
           <DialogTitle>{isEdit ? t('form.title.edit') : t('form.title.new')}</DialogTitle>
         </DialogHeader>
-        
-        <form onSubmit={handleSubmit(onFormSubmit)} className="space-y-4">
+
+        <form
+          id="provider-form"
+          onSubmit={handleSubmit(onFormSubmit)}
+          className="flex-1 min-h-0 space-y-4 overflow-y-auto -mr-1 pr-1"
+        >
           {/* Name */}
           <div className="space-y-2">
             <Label htmlFor="name">
@@ -455,36 +460,6 @@ export function ProviderForm({
             />
           </div>
 
-          {/* Response Timeout */}
-          <div className="space-y-2">
-            <Label htmlFor="response_timeout_seconds">
-              {t('form.responseTimeout.label')} <span className="text-destructive">*</span>
-            </Label>
-            <Input
-              id="response_timeout_seconds"
-              type="number"
-              min={1}
-              step={1}
-              placeholder="1800"
-              {...register('response_timeout_seconds', {
-                valueAsNumber: true,
-                required: t('form.responseTimeout.required'),
-                min: {
-                  value: 1,
-                  message: t('form.responseTimeout.min'),
-                },
-              })}
-            />
-            <p className="text-xs text-muted-foreground">
-              {t('form.responseTimeout.help')}
-            </p>
-            {errors.response_timeout_seconds && (
-              <p className="text-sm text-destructive">
-                {errors.response_timeout_seconds.message}
-              </p>
-            )}
-          </div>
-
           {/* Remark */}
           <div className="space-y-2">
             <Label htmlFor="remark">{t('form.remark.label')}</Label>
@@ -496,153 +471,206 @@ export function ProviderForm({
             />
           </div>
 
-          {/* Extra Headers */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>{t('form.extraHeaders.label')}</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addHeader}
-                className="h-8 px-2"
-              >
-                <Plus className="mr-1 h-3 w-3" suppressHydrationWarning />
-                {t('form.extraHeaders.add')}
-              </Button>
-            </div>
-            
-            {extraHeaders.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                {t('form.extraHeaders.empty')}
-              </p>
-            )}
-
-            <div className="space-y-2 max-h-[200px] overflow-y-auto">
-              {extraHeaders.map((header, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <Input
-                    placeholder={t('form.extraHeaders.keyPlaceholder')}
-                    value={header.key}
-                    onChange={(e) => updateHeader(index, 'key', e.target.value)}
-                    className="flex-1"
-                  />
-                  <Input
-                    placeholder={t('form.extraHeaders.valuePlaceholder')}
-                    value={header.value}
-                    onChange={(e) => updateHeader(index, 'value', e.target.value)}
-                    className="flex-1"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeHeader(index)}
-                    className="h-9 w-9 text-destructive hover:text-destructive/90"
-                  >
-                    <Trash2 className="h-4 w-4" suppressHydrationWarning />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Default Parameters */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>{t('form.defaultParams.label')}</Label>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={addDefaultParameter}
-                className="h-8 px-2"
-              >
-                <Plus className="mr-1 h-3 w-3" suppressHydrationWarning />
-                {t('form.defaultParams.add')}
-              </Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t('form.defaultParams.helpApply')}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {t('form.defaultParams.helpNumeric')}
-            </p>
-
-            {defaultParameters.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                {t('form.defaultParams.empty')}
-              </p>
-            )}
-
-            <div className="space-y-2 max-h-[200px] overflow-y-auto">
-              {defaultParameters.map((param, index) => (
-                <div key={index} className="flex items-center gap-2">
-                  <Select
-                    value={param.key}
-                    onValueChange={(value: string) =>
-                      updateDefaultParameter(index, 'key', value)
-                    }
-                  >
-                    <SelectTrigger className="flex-1">
-                      <SelectValue placeholder={t('form.defaultParams.selectKey')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {DEFAULT_PARAMETER_OPTIONS.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Input
-                    type="number"
-                    placeholder={t('form.defaultParams.valuePlaceholder')}
-                    value={param.value}
-                    onChange={(e) =>
-                      updateDefaultParameter(index, 'value', e.target.value)
-                    }
-                    className="flex-1"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeDefaultParameter(index)}
-                    className="h-9 w-9 text-destructive hover:text-destructive/90"
-                  >
-                    <Trash2 className="h-4 w-4" suppressHydrationWarning />
-                  </Button>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Proxy Configuration */}
-          <div className="space-y-3 rounded-md border border-border p-3">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="proxy_enabled">{t('form.proxy.label')}</Label>
-              <Switch
-                id="proxy_enabled"
-                checked={proxyEnabled}
-                onCheckedChange={(checked) => setValue('proxy_enabled', checked)}
+          {/* Advanced (collapsed by default) */}
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="flex w-full items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2 text-sm font-medium hover:bg-muted"
+              aria-expanded={advancedOpen}
+            >
+              <span>{t('form.advanced.label')}</span>
+              <ChevronDown
+                className={cn(
+                  'h-4 w-4 transition-transform',
+                  advancedOpen && 'rotate-180'
+                )}
+                suppressHydrationWarning
               />
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t('form.proxy.help')}
-            </p>
+            </button>
 
-            {proxyEnabled && (
+            {advancedOpen && (
               <div className="space-y-4">
+                {/* Extra Headers */}
                 <div className="space-y-2">
-                  <Label htmlFor="proxy_url">{t('form.proxy.urlLabel')}</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>{t('form.extraHeaders.label')}</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addHeader}
+                      className="h-8 px-2"
+                    >
+                      <Plus className="mr-1 h-3 w-3" suppressHydrationWarning />
+                      {t('form.extraHeaders.add')}
+                    </Button>
+                  </div>
+
+                  {extraHeaders.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {t('form.extraHeaders.empty')}
+                    </p>
+                  )}
+
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                    {extraHeaders.map((header, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <Input
+                          placeholder={t('form.extraHeaders.keyPlaceholder')}
+                          value={header.key}
+                          onChange={(e) => updateHeader(index, 'key', e.target.value)}
+                          className="flex-1"
+                        />
+                        <Input
+                          placeholder={t('form.extraHeaders.valuePlaceholder')}
+                          value={header.value}
+                          onChange={(e) => updateHeader(index, 'value', e.target.value)}
+                          className="flex-1"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeHeader(index)}
+                          className="h-9 w-9 text-destructive hover:text-destructive/90"
+                        >
+                          <Trash2 className="h-4 w-4" suppressHydrationWarning />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Default Parameters */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>{t('form.defaultParams.label')}</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addDefaultParameter}
+                      className="h-8 px-2"
+                    >
+                      <Plus className="mr-1 h-3 w-3" suppressHydrationWarning />
+                      {t('form.defaultParams.add')}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t('form.defaultParams.helpApply')}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {t('form.defaultParams.helpNumeric')}
+                  </p>
+
+                  {defaultParameters.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {t('form.defaultParams.empty')}
+                    </p>
+                  )}
+
+                  <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                    {defaultParameters.map((param, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <Select
+                          value={param.key}
+                          onValueChange={(value: string) =>
+                            updateDefaultParameter(index, 'key', value)
+                          }
+                        >
+                          <SelectTrigger className="flex-1">
+                            <SelectValue placeholder={t('form.defaultParams.selectKey')} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {DEFAULT_PARAMETER_OPTIONS.map((option) => (
+                              <SelectItem key={option.value} value={option.value}>
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          type="number"
+                          placeholder={t('form.defaultParams.valuePlaceholder')}
+                          value={param.value}
+                          onChange={(e) =>
+                            updateDefaultParameter(index, 'value', e.target.value)
+                          }
+                          className="flex-1"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => removeDefaultParameter(index)}
+                          className="h-9 w-9 text-destructive hover:text-destructive/90"
+                        >
+                          <Trash2 className="h-4 w-4" suppressHydrationWarning />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Response Timeout */}
+                <div className="space-y-2">
+                  <Label htmlFor="response_timeout_seconds">
+                    {t('form.responseTimeout.label')} <span className="text-destructive">*</span>
+                  </Label>
                   <Input
-                    id="proxy_url"
-                    placeholder={
-                      isEdit ? t('form.proxy.urlPlaceholderEdit') : t('form.proxy.urlPlaceholderNew')
-                    }
-                    {...register('proxy_url')}
+                    id="response_timeout_seconds"
+                    type="number"
+                    min={1}
+                    step={1}
+                    placeholder="1800"
+                    {...register('response_timeout_seconds', {
+                      valueAsNumber: true,
+                      required: t('form.responseTimeout.required'),
+                      min: {
+                        value: 1,
+                        message: t('form.responseTimeout.min'),
+                      },
+                    })}
                   />
+                  <p className="text-xs text-muted-foreground">
+                    {t('form.responseTimeout.help')}
+                  </p>
+                  {errors.response_timeout_seconds && (
+                    <p className="text-sm text-destructive">
+                      {errors.response_timeout_seconds.message}
+                    </p>
+                  )}
+                </div>
+
+                {/* Proxy Configuration */}
+                <div className="space-y-3 rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="proxy_enabled">{t('form.proxy.label')}</Label>
+                    <Switch
+                      id="proxy_enabled"
+                      checked={proxyEnabled}
+                      onCheckedChange={(checked) => setValue('proxy_enabled', checked)}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t('form.proxy.help')}
+                  </p>
+
+                  {proxyEnabled && (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="proxy_url">{t('form.proxy.urlLabel')}</Label>
+                        <Input
+                          id="proxy_url"
+                          placeholder={
+                            isEdit ? t('form.proxy.urlPlaceholderEdit') : t('form.proxy.urlPlaceholderNew')
+                          }
+                          {...register('proxy_url')}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -657,21 +685,21 @@ export function ProviderForm({
               onCheckedChange={(checked) => setValue('is_active', checked)}
             />
           </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={loading}
-            >
-              {t('form.actions.cancel')}
-            </Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? t('form.actions.saving') : t('form.actions.save')}
-            </Button>
-          </DialogFooter>
         </form>
+
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+          >
+            {t('form.actions.cancel')}
+          </Button>
+          <Button type="submit" form="provider-form" disabled={loading}>
+            {loading ? t('form.actions.saving') : t('form.actions.save')}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
