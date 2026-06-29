@@ -30,6 +30,7 @@ from app.common.costs import (
 from app.rules.context import RuleContext, TokenUsage
 from app.rules.engine import RuleEngine
 from app.services.retry_handler import RetryHandler
+from app.services.provider_health import ProviderHealthTracker
 from app.services.strategy import CostFirstStrategy, PriorityStrategy, RoundRobinStrategy, SelectionStrategy
 
 
@@ -44,6 +45,7 @@ class ModelService:
         self,
         model_repo: ModelRepository,
         provider_repo: ProviderRepository,
+        health_tracker: ProviderHealthTracker | None = None,
     ):
         """
         Initialize Service
@@ -54,6 +56,7 @@ class ModelService:
         """
         self.model_repo = model_repo
         self.provider_repo = provider_repo
+        self._health_tracker = health_tracker
         self._round_robin_strategy = RoundRobinStrategy()
         self._cost_first_strategy = CostFirstStrategy()
         self._priority_strategy = PriorityStrategy()
@@ -177,7 +180,7 @@ class ModelService:
             )
 
         strategy = self._get_strategy(mapping.strategy)
-        retry_handler = RetryHandler(strategy)
+        retry_handler = RetryHandler(strategy, self._health_tracker)
         ordered_candidates = await retry_handler.get_ordered_candidates(
             candidates,
             requested_model,
@@ -472,6 +475,9 @@ class ModelService:
             item.resolved_cached_output_price = (
                 model.cached_output_price if model else None
             )
+            item.resolved_cache_creation_input_price = (
+                model.cache_creation_input_price if model else None
+            )
             return item
 
         item.resolved_billing_mode = provider_mode
@@ -483,6 +489,7 @@ class ModelService:
         item.resolved_cache_billing_enabled = item.cache_billing_enabled
         item.resolved_cached_input_price = item.cached_input_price
         item.resolved_cached_output_price = item.cached_output_price
+        item.resolved_cache_creation_input_price = item.cache_creation_input_price
         return item
     
     async def update_provider_mapping(
@@ -529,6 +536,7 @@ class ModelService:
             "cache_billing_enabled": existing.cache_billing_enabled or False,
             "cached_input_price": existing.cached_input_price,
             "cached_output_price": existing.cached_output_price,
+            "cache_creation_input_price": existing.cache_creation_input_price,
         }
         merged.update(update_data)
         if merged.get("cache_billing_enabled") is None:
@@ -790,6 +798,18 @@ class ModelService:
             providers = await self.model_repo.get_provider_mappings(
                 requested_model=mapping.requested_model
             )
+            if self._health_tracker is not None and providers:
+                health_by_mapping = await self._health_tracker.get_mapping_snapshots(
+                    provider.id for provider in providers
+                )
+                for provider in providers:
+                    health = health_by_mapping.get(provider.id)
+                    if health is None:
+                        continue
+                    provider.health_degraded = health.degraded
+                    provider.health_sample_count = health.sample_count
+                    provider.health_failure_count = health.failure_count
+                    provider.health_failure_rate = health.failure_rate
             provider_count = len(providers)
             # Active provider count requires both: mapping is_active AND provider is_active
             active_provider_count = sum(
@@ -819,6 +839,7 @@ class ModelService:
             cache_billing_enabled=mapping.cache_billing_enabled,
             cached_input_price=mapping.cached_input_price,
             cached_output_price=mapping.cached_output_price,
+            cache_creation_input_price=mapping.cache_creation_input_price,
             created_at=mapping.created_at,
             updated_at=mapping.updated_at,
             provider_count=provider_count,

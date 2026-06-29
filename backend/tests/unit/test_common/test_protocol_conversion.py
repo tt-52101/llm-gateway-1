@@ -12,7 +12,7 @@ from app.common.protocol_conversion import (
     convert_response_for_user,
     convert_stream_for_user,
 )
-from app.common.stream_usage import SSEDecoder
+from app.common.stream_usage import SSEDecoder, StreamUsageAccumulator
 
 
 @pytest.mark.asyncio
@@ -580,7 +580,12 @@ def test_convert_response_openai_to_anthropic():
                     "finish_reason": "stop",
                 }
             ],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
+            "usage": {
+                "prompt_tokens": 5,
+                "completion_tokens": 2,
+                "total_tokens": 7,
+                "prompt_tokens_details": {"cached_tokens": 4},
+            },
         },
     )
 
@@ -588,6 +593,8 @@ def test_convert_response_openai_to_anthropic():
     assert converted["role"] == "assistant"
     assert isinstance(converted["content"], list)
     assert converted["content"][0]["type"] == "text"
+    assert converted["usage"]["input_tokens"] == 1
+    assert converted["usage"]["cache_read_input_tokens"] == 4
 
 
 def test_convert_response_anthropic_to_openai():
@@ -603,14 +610,21 @@ def test_convert_response_anthropic_to_openai():
             "content": [{"type": "text", "text": "Hello"}],
             "stop_reason": "end_turn",
             "stop_sequence": None,
-            "usage": {"input_tokens": 1, "output_tokens": 2},
+            "usage": {
+                "input_tokens": 1,
+                "cache_creation_input_tokens": 3,
+                "cache_read_input_tokens": 4,
+                "output_tokens": 2,
+            },
         },
     )
 
     assert converted["object"] == "chat.completion"
     assert converted["choices"][0]["message"]["content"] == "Hello"
-    assert converted["usage"]["prompt_tokens"] == 1
+    assert converted["usage"]["prompt_tokens"] == 8
     assert converted["usage"]["completion_tokens"] == 2
+    assert converted["usage"]["total_tokens"] == 10
+    assert converted["usage"]["prompt_tokens_details"] == {"cached_tokens": 4}
 
 
 def test_convert_request_openai_responses_to_anthropic_with_max_output_tokens():
@@ -1987,6 +2001,7 @@ def test_convert_response_gemini_to_anthropic():
     assert converted["role"] == "assistant"
     assert isinstance(converted["content"], list)
     assert converted["content"][0]["type"] == "text"
+    assert converted["usage"]["input_tokens"] == 3
     assert "Hello from Gemini" in converted["content"][0]["text"]
 
 
@@ -2088,3 +2103,124 @@ def test_sanitize_anthropic_tools_skips_malformed_entries():
     # must not raise
     out = sanitize_anthropic_tools(tools)
     assert len(out) == 3
+
+
+@pytest.mark.asyncio
+async def test_convert_stream_openai_to_anthropic_carries_usage_from_empty_choices_chunk():
+    """Regression: OpenAI streams report the real usage in a final chunk whose
+    `choices` is `[]` (often after the finish_reason chunk). That usage — including
+    cached tokens — must survive the OpenAI→Anthropic conversion and be readable by
+    the billing accumulator. See plan crispy-petting-mccarthy."""
+    content_chunk = {
+        "id": "chatcmpl-1",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "claude-opus-4-8",
+        "choices": [{"index": 0, "delta": {"content": "Hi"}, "finish_reason": None}],
+        "usage": None,
+    }
+    finish_chunk = {
+        "id": "chatcmpl-1",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "claude-opus-4-8",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        "usage": None,
+    }
+    # Real usage arrives last, with empty choices.
+    usage_chunk = {
+        "id": "chatcmpl-1",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "claude-opus-4-8",
+        "choices": [],
+        "usage": {
+            "prompt_tokens": 373372,
+            "completion_tokens": 891,
+            "total_tokens": 374263,
+            "prompt_tokens_details": {"cached_tokens": 373245},
+        },
+    }
+    upstream = _agen(
+        [
+            f"data: {json.dumps(content_chunk)}\n\n".encode(),
+            f"data: {json.dumps(finish_chunk)}\n\n".encode(),
+            f"data: {json.dumps(usage_chunk)}\n\n".encode(),
+            b"data: [DONE]\n\n",
+        ]
+    )
+
+    # The accumulator consumes the CONVERTED (Anthropic) stream, exactly as
+    # proxy_service.process_request_stream does for a cross-protocol request.
+    acc = StreamUsageAccumulator(protocol="anthropic", model="claude-opus-4-8")
+    async for c in convert_stream_for_user(
+        request_protocol="anthropic",
+        supplier_protocol="openai",
+        upstream=upstream,
+        model="claude-opus-4-8",
+    ):
+        acc.feed(c)
+
+    result = acc.finalize()
+    assert result.input_tokens == 373372
+    assert result.output_tokens == 891
+    assert result.usage_details is not None
+    assert result.usage_details["cache_read_input_tokens"] == 373245
+
+
+@pytest.mark.asyncio
+async def test_convert_stream_openai_to_anthropic_empty_stream_no_spurious_message_delta():
+    """An empty/contentless upstream must emit only message_stop — never a
+    message_delta without a preceding message_start (which would be malformed
+    Anthropic SSE). Guards the trailing-flush logic."""
+    upstream = _agen([b"data: [DONE]\n\n"])
+
+    out = b""
+    async for c in convert_stream_for_user(
+        request_protocol="anthropic",
+        supplier_protocol="openai",
+        upstream=upstream,
+        model="claude-opus-4-8",
+    ):
+        out += c
+
+    decoder = SSEDecoder()
+    events = [
+        json.loads(p)["type"]
+        for p in decoder.feed(out)
+        if p.strip() != "[DONE]"
+    ]
+    assert events == ["message_stop"]
+
+
+@pytest.mark.asyncio
+async def test_convert_stream_openai_to_anthropic_usage_without_finish_reason():
+    """Some suppliers emit the usage chunk (empty choices) without ever sending a
+    finish_reason. Usage must still be carried into the terminal message_delta."""
+    content_chunk = {
+        "choices": [{"index": 0, "delta": {"content": "Hi"}, "finish_reason": None}],
+    }
+    usage_chunk = {
+        "choices": [],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 5},
+    }
+    upstream = _agen(
+        [
+            f"data: {json.dumps(content_chunk)}\n\n".encode(),
+            f"data: {json.dumps(usage_chunk)}\n\n".encode(),
+            b"data: [DONE]\n\n",
+        ]
+    )
+
+    acc = StreamUsageAccumulator(protocol="anthropic", model="claude-opus-4-8")
+    async for c in convert_stream_for_user(
+        request_protocol="anthropic",
+        supplier_protocol="openai",
+        upstream=upstream,
+        model="claude-opus-4-8",
+    ):
+        acc.feed(c)
+
+    result = acc.finalize()
+    assert result.input_tokens == 100
+    assert result.output_tokens == 5

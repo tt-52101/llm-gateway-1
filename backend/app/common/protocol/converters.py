@@ -18,6 +18,7 @@ from app.common.reasoning import (
     normalize_reasoning_for_anthropic,
     normalize_reasoning_for_openai,
 )
+from app.common.usage_extractor import extract_usage_details
 
 from .base import (
     ConversionResult,
@@ -81,6 +82,45 @@ _OPENAI_IMAGE_PATHS = {
     "/v1/images/edits",
     "/v1/images/variations",
 }
+
+
+def _usage_int(value: Any, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return default
+
+
+def _anthropic_usage_total_input(usage: Dict[str, Any]) -> int:
+    return (
+        _usage_int(usage.get("input_tokens"))
+        + _usage_int(usage.get("cache_creation_input_tokens"))
+        + _usage_int(usage.get("cache_read_input_tokens"))
+    )
+
+
+def _openai_usage_cache_read(usage: Dict[str, Any]) -> int:
+    details = (
+        usage.get("input_tokens_details")
+        or usage.get("prompt_tokens_details")
+        or {}
+    )
+    if isinstance(details, dict):
+        return _usage_int(details.get("cached_tokens"))
+    return _usage_int(usage.get("cached_tokens"))
+
+
+def _openai_usage_uncached_input(usage: Dict[str, Any]) -> int:
+    prompt_tokens = _usage_int(
+        usage.get("prompt_tokens"),
+        _usage_int(usage.get("input_tokens")),
+    )
+    return max(prompt_tokens - _openai_usage_cache_read(usage), 0)
 
 
 def _protocol_to_sdk(protocol: Protocol) -> "SDKProtocol":
@@ -1624,6 +1664,40 @@ class SDKResponseConverter(IResponseConverter):
                 options=options,
             )
 
+            usage = body.get("usage") if isinstance(body, dict) else None
+            if isinstance(usage, dict):
+                if self._source == Protocol.ANTHROPIC and self._target in (
+                    Protocol.OPENAI,
+                    Protocol.OPENAI_RESPONSES,
+                ):
+                    prompt_tokens = _anthropic_usage_total_input(usage)
+                    output_tokens = _usage_int(usage.get("output_tokens"))
+                    converted["usage"] = {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": output_tokens,
+                        "total_tokens": prompt_tokens + output_tokens,
+                    }
+                    cache_read = _usage_int(usage.get("cache_read_input_tokens"))
+                    if cache_read:
+                        converted["usage"]["prompt_tokens_details"] = {
+                            "cached_tokens": cache_read,
+                        }
+                elif self._source in (
+                    Protocol.OPENAI,
+                    Protocol.OPENAI_RESPONSES,
+                ) and self._target == Protocol.ANTHROPIC:
+                    output_tokens = _usage_int(
+                        usage.get("completion_tokens"),
+                        _usage_int(usage.get("output_tokens")),
+                    )
+                    converted["usage"] = {
+                        "input_tokens": _openai_usage_uncached_input(usage),
+                        "output_tokens": output_tokens,
+                    }
+                    cache_read = _openai_usage_cache_read(usage)
+                    if cache_read:
+                        converted["usage"]["cache_read_input_tokens"] = cache_read
+
             return converted
 
         except Exception as e:
@@ -1789,7 +1863,7 @@ class SDKStreamConverter(IStreamConverter):
                         # Extract initial usage from message_start
                         initial_usage = message.get("usage")
                         if isinstance(initial_usage, dict):
-                            input_tokens = initial_usage.get("input_tokens", 0)
+                            input_tokens = _anthropic_usage_total_input(initial_usage)
                             # Initialize final_usage with input_tokens from message_start
                             final_usage = {
                                 "prompt_tokens": input_tokens,
@@ -1902,19 +1976,18 @@ class SDKStreamConverter(IStreamConverter):
                     usage_data = data.get("usage")
                     if isinstance(usage_data, dict):
                         # Convert Anthropic usage format to OpenAI format
-                        input_tokens = usage_data.get("input_tokens", 0)
-                        output_tokens = usage_data.get("output_tokens", 0)
+                        input_tokens = _anthropic_usage_total_input(usage_data)
+                        output_tokens = _usage_int(usage_data.get("output_tokens"))
                         final_usage = {
                             "prompt_tokens": input_tokens,
                             "completion_tokens": output_tokens,
                             "total_tokens": input_tokens + output_tokens,
                         }
                         # Include cache tokens if available
-                        if "cache_creation_input_tokens" in usage_data:
+                        cache_read = _usage_int(usage_data.get("cache_read_input_tokens"))
+                        if cache_read:
                             final_usage["prompt_tokens_details"] = {
-                                "cached_tokens": usage_data.get(
-                                    "cache_read_input_tokens", 0
-                                ),
+                                "cached_tokens": cache_read,
                             }
 
                     yield _encode_sse_json(
@@ -1962,6 +2035,11 @@ class SDKStreamConverter(IStreamConverter):
         current_block_type: Optional[str] = None
         # Track current tool call by id (more reliable than index which may be missing)
         current_tool_call_id: Optional[str] = None
+        # Usage + stop_reason are emitted in the trailing flush, because OpenAI
+        # streams deliver the real usage in a final chunk with empty `choices`
+        # (often AFTER the finish_reason chunk). Capture them as we go.
+        last_usage = None
+        pending_stop_reason: Optional[str] = None
 
         async for chunk in upstream:
             for payload in decoder.feed(chunk):
@@ -1993,6 +2071,13 @@ class SDKStreamConverter(IStreamConverter):
                     data = json.loads(payload)
                 except Exception:
                     continue
+
+                # Capture usage from every chunk BEFORE the empty-choices guard:
+                # the final usage chunk has `choices: []`, so reading it after the
+                # guard would drop it entirely.
+                chunk_usage = extract_usage_details(data)
+                if chunk_usage is not None:
+                    last_usage = chunk_usage
 
                 choices = data.get("choices", [])
                 if not choices:
@@ -2102,7 +2187,10 @@ class SDKStreamConverter(IStreamConverter):
 
                 # Handle Finish Reason
                 if finish_reason:
-                    # Close any open block
+                    # Close any open block now, but defer the terminal
+                    # message_delta/message_stop to the trailing flush so the
+                    # final usage chunk (which arrives after finish_reason with
+                    # empty choices) is included in the usage we emit.
                     if current_block_type is not None:
                         yield _encode_sse_json(
                             {
@@ -2111,24 +2199,66 @@ class SDKStreamConverter(IStreamConverter):
                             },
                             event="content_block_stop",
                         )
+                        current_block_type = None
 
-                    stop_reason = _map_openai_to_anthropic_finish_reason(finish_reason)
-                    yield _encode_sse_json(
-                        {
-                            "type": "message_delta",
-                            "delta": {"stop_reason": stop_reason},
-                            "usage": {"output_tokens": 0},
-                        },
-                        event="message_delta",
+                    pending_stop_reason = _map_openai_to_anthropic_finish_reason(
+                        finish_reason
                     )
 
-                    if not sent_message_stop:
-                        sent_message_stop = True
-                        yield _encode_sse_json(
-                            {"type": "message_stop"}, event="message_stop"
+        # Trailing flush: emit the terminal message_delta (carrying real usage)
+        # and message_stop once the upstream stream is fully drained.
+        if not sent_message_stop:
+            if current_block_type is not None:
+                yield _encode_sse_json(
+                    {
+                        "type": "content_block_stop",
+                        "index": current_block_index,
+                    },
+                    event="content_block_stop",
+                )
+                current_block_type = None
+
+            # Emit the terminal message_delta only when we have something real to
+            # report — a finish_reason or upstream usage — and a message was started.
+            # This avoids a spurious zero-usage message_delta for malformed/empty
+            # upstreams (matching the prior behavior) while still carrying usage when
+            # the supplier reports it without a finish_reason.
+            if sent_message_start and (
+                pending_stop_reason is not None or last_usage is not None
+            ):
+                usage_payload: Dict[str, Any] = {"output_tokens": 0}
+                if last_usage is not None:
+                    cache_read_tokens = (
+                        last_usage.cache_read_input_tokens
+                        if last_usage.cache_read_input_tokens is not None
+                        else last_usage.cached_tokens
+                    )
+                    input_tokens = max(
+                        (last_usage.input_tokens or 0)
+                        - (cache_read_tokens or 0)
+                        - (last_usage.cache_creation_input_tokens or 0),
+                        0,
+                    )
+                    usage_payload = {
+                        "input_tokens": input_tokens,
+                        "output_tokens": last_usage.output_tokens or 0,
+                    }
+                    if cache_read_tokens:
+                        usage_payload["cache_read_input_tokens"] = cache_read_tokens
+                    if last_usage.cache_creation_input_tokens:
+                        usage_payload["cache_creation_input_tokens"] = (
+                            last_usage.cache_creation_input_tokens
                         )
 
-        if not sent_message_stop:
+                yield _encode_sse_json(
+                    {
+                        "type": "message_delta",
+                        "delta": {"stop_reason": pending_stop_reason},
+                        "usage": usage_payload,
+                    },
+                    event="message_delta",
+                )
+
             sent_message_stop = True
             yield _encode_sse_json({"type": "message_stop"}, event="message_stop")
 

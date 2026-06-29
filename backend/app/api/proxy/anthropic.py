@@ -52,6 +52,7 @@ async def create_message(
             initial_response, stream_gen, log_info = await service.process_request_stream(
                 api_key_id=api_key.id,
                 api_key_name=api_key.key_name,
+                record_details=api_key.record_details,
                 request_protocol="anthropic",
                 path="/v1/messages",
                 request_url=str(request.url),
@@ -94,6 +95,7 @@ async def create_message(
             response, log_info = await service.process_request(
                 api_key_id=api_key.id,
                 api_key_name=api_key.key_name,
+                record_details=api_key.record_details,
                 request_protocol="anthropic",
                 path="/v1/messages",
                 request_url=str(request.url),

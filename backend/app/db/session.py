@@ -146,6 +146,7 @@ def _run_migrations(sync_conn) -> None:
             "cache_billing_enabled": "cache_billing_enabled BOOLEAN DEFAULT FALSE",
             "cached_input_price": "cached_input_price NUMERIC(12,4)",
             "cached_output_price": "cached_output_price NUMERIC(12,4)",
+            "cache_creation_input_price": "cache_creation_input_price NUMERIC(12,4)",
         },
     )
     ensure_columns(
@@ -160,6 +161,7 @@ def _run_migrations(sync_conn) -> None:
             "cache_billing_enabled": "cache_billing_enabled BOOLEAN DEFAULT FALSE",
             "cached_input_price": "cached_input_price NUMERIC(12,4)",
             "cached_output_price": "cached_output_price NUMERIC(12,4)",
+            "cache_creation_input_price": "cache_creation_input_price NUMERIC(12,4)",
         },
     )
     ensure_columns(
@@ -190,6 +192,13 @@ def _run_migrations(sync_conn) -> None:
             "proxy_url": "proxy_url TEXT",
             "provider_options": "provider_options JSON",
             "remark": "remark TEXT",
+            "response_timeout_seconds": "response_timeout_seconds INTEGER DEFAULT 1800",
+        },
+    )
+    ensure_columns(
+        "api_keys",
+        {
+            "record_details": "record_details BOOLEAN DEFAULT TRUE",
         },
     )
     _drop_request_logs_provider_fk(sync_conn, inspector)

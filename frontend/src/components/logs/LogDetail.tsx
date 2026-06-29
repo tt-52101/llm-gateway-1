@@ -50,6 +50,8 @@ import {
 } from "@/components/common/StreamJsonViewer";
 import { useTranslations } from "next-intl";
 import { getStoredAdminToken } from "@/lib/api/client";
+import { getConvertedRequest } from "@/lib/api/logs";
+import { PromptView, hasPromptContent } from "./PromptView";
 
 interface LogDetailProps {
   /** Log data */
@@ -157,12 +159,21 @@ export function LogDetail({ log }: LogDetailProps) {
   const t = useTranslations("logs");
   const tc = useTranslations("common");
   const [activeTab, setActiveTab] = useState<
-    "request" | "response" | "headers"
-  >("request");
+    "prompt" | "request" | "response" | "headers"
+  >("prompt");
   const [layout, setLayout] = useState<"vertical" | "horizontal">("vertical");
   const [traceCopied, setTraceCopied] = useState(false);
   const [originalCurlCopied, setOriginalCurlCopied] = useState(false);
   const [convertedCurlCopied, setConvertedCurlCopied] = useState(false);
+  // Full (non-truncated) converted upstream request body, reconstructed on
+  // demand from the server. Falls back to log.converted_request_body when not
+  // yet loaded or when reconstruction fails.
+  const [fullConvertedBody, setFullConvertedBody] = useState<Record<
+    string,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    any
+  > | null>(null);
+  const [fullConvertedUrl, setFullConvertedUrl] = useState<string | null>(null);
   const [debugDialogOpen, setDebugDialogOpen] = useState(false);
   const [debugCopied, setDebugCopied] = useState(false);
   const [retryConfirmOpen, setRetryConfirmOpen] = useState(false);
@@ -184,6 +195,35 @@ export function LogDetail({ log }: LogDetailProps) {
     setClientOrigin(window.location.origin);
   }, []);
 
+  // Reconstruct the full converted upstream request body for the current log.
+  // The stored body is truncated for storage, so we fetch the complete one
+  // and use it for both the JSON display and "Copy as cURL".
+  const logId = log?.id;
+  const hasConvertedBody = Boolean(log?.converted_request_body);
+  useEffect(() => {
+    setFullConvertedBody(null);
+    setFullConvertedUrl(null);
+    if (!logId || !hasConvertedBody) return;
+    let cancelled = false;
+    getConvertedRequest(logId)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.converted_request_body) {
+          setFullConvertedBody(res.converted_request_body);
+        }
+        if (res.upstream_url) {
+          setFullConvertedUrl(res.upstream_url);
+        }
+      })
+      .catch(() => {
+        // Reconstruction failed (e.g. detail expired, provider removed).
+        // Fall back to the stored truncated body silently.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [logId, hasConvertedBody]);
+
   const responseStatus = log?.response_status;
   const statusVariant = useMemo<BadgeProps["variant"]>(() => {
     const status = responseStatus;
@@ -193,6 +233,18 @@ export function LogDetail({ log }: LogDetailProps) {
     if (status >= 500) return "error";
     return "outline";
   }, [responseStatus]);
+
+  // Whether the request body can be rendered as a friendly chat/prompt view.
+  const showPromptTab = useMemo(
+    () => hasPromptContent(log?.request_body, log?.request_protocol),
+    [log?.request_body, log?.request_protocol],
+  );
+  // The Prompt tab is the default; fall back to Request when it is unavailable.
+  useEffect(() => {
+    if (!showPromptTab && activeTab === "prompt") {
+      setActiveTab("request");
+    }
+  }, [showPromptTab, activeTab]);
 
   const modelMapping = useMemo(() => {
     const requestedModel = log?.requested_model;
@@ -272,10 +324,11 @@ export function LogDetail({ log }: LogDetailProps) {
   };
 
   const handleCopyConvertedAsCurl = async () => {
-    if (!log?.converted_request_body) return;
-    const method = (log.request_method || "POST").toUpperCase();
-    const url = log.upstream_url || "<URL>";
-    const body = JSON.stringify(log.converted_request_body, null, 2);
+    const convertedBody = fullConvertedBody ?? log?.converted_request_body;
+    if (!convertedBody) return;
+    const method = (log?.request_method || "POST").toUpperCase();
+    const url = fullConvertedUrl || log?.upstream_url || "<URL>";
+    const body = JSON.stringify(convertedBody, null, 2);
     const lines = [
       `curl -X ${method} '${url}'`,
       `  -H 'Content-Type: application/json'`,
@@ -537,6 +590,19 @@ export function LogDetail({ log }: LogDetailProps) {
   if (!log) return null;
 
   const detailExpired = log.detail_available === false;
+  // Whether any heavy payload (bodies/headers) is present. When an API Key has
+  // detail logging disabled, all of these are empty, so we hide the payload card
+  // and its empty request/response/header viewers entirely.
+  const hasHeaders = (headers?: Record<string, string>) =>
+    Boolean(headers && Object.keys(headers).length > 0);
+  const hasPayloadDetail = Boolean(
+    log.request_body ||
+      log.response_body ||
+      log.converted_request_body ||
+      log.upstream_response_body ||
+      hasHeaders(log.request_headers) ||
+      hasHeaders(log.response_headers),
+  );
   const retryUnsupported =
     detailExpired ||
     !log.request_path ||
@@ -897,6 +963,21 @@ export function LogDetail({ log }: LogDetailProps) {
         </Card>
       )}
 
+      {!hasPayloadDetail && !detailExpired && (
+        <Card>
+          <CardContent className="flex items-start gap-3 p-4 text-sm text-muted-foreground">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" suppressHydrationWarning />
+            <div className="space-y-1">
+              <div className="font-medium text-foreground">
+                {t("detail.detailNotRecordedTitle")}
+              </div>
+              <div>{t("detail.detailNotRecordedDescription")}</div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {hasPayloadDetail && (
       <Card>
         <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
           <div>
@@ -965,6 +1046,14 @@ export function LogDetail({ log }: LogDetailProps) {
               </div>
             )}
             <div className="inline-flex w-full rounded-lg border bg-muted/30 p-1 sm:w-auto">
+              {showPromptTab && (
+                <button
+                  className={tabButtonClass("prompt")}
+                  onClick={() => setActiveTab("prompt")}
+                >
+                  {t("detail.prompt.tab")}
+                </button>
+              )}
               <button
                 className={tabButtonClass("request")}
                 onClick={() => setActiveTab("request")}
@@ -988,6 +1077,12 @@ export function LogDetail({ log }: LogDetailProps) {
         </CardHeader>
 
         <CardContent>
+          {activeTab === "prompt" && (
+            <PromptView
+              body={log.request_body}
+              protocol={log.request_protocol}
+            />
+          )}
           {activeTab === "request" && (
             <div
               className={
@@ -1130,7 +1225,7 @@ export function LogDetail({ log }: LogDetailProps) {
                     )}
                   </div>
                   <JsonViewer
-                    data={log.converted_request_body}
+                    data={fullConvertedBody ?? log.converted_request_body}
                     defaultRawView
                     defaultWrapLines
                     maxHeight={layout === "horizontal" ? "65vh" : "45vh"}
@@ -1240,6 +1335,7 @@ export function LogDetail({ log }: LogDetailProps) {
           )}
         </CardContent>
       </Card>
+      )}
 
       <Dialog open={debugDialogOpen} onOpenChange={setDebugDialogOpen}>
         <DialogContent className="h-[85vh] max-h-[85vh] w-[min(96vw,1100px)] max-w-none overflow-hidden p-0">

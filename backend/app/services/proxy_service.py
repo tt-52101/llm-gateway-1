@@ -3,13 +3,17 @@
 Implements core business logic for request proxying."""
 
 import asyncio
+import copy
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, AsyncGenerator, Callable, Optional
 
 import anyio
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.common.costs import calculate_cost_from_billing, resolve_billing
 from app.common.errors import NotFoundError, ServiceError
@@ -28,7 +32,7 @@ from app.common.upstream_url import build_upstream_url
 from app.common.token_counter import get_token_counter
 from app.common.usage_extractor import extract_usage_details
 from app.common.utils import generate_trace_id
-from app.domain.log import RequestLogCreate
+from app.domain.log import RequestLogCreate, RequestLogModel
 from app.domain.model import ModelMapping, ModelMappingProviderResponse
 from app.domain.provider import Provider
 from app.providers import ProviderResponse, get_provider_client
@@ -37,6 +41,7 @@ from app.repositories.model_repo import ModelRepository
 from app.repositories.provider_repo import ProviderRepository
 from app.rules import CandidateProvider, RuleContext, RuleEngine, TokenUsage
 from app.services.retry_handler import AttemptRecord, RetryHandler
+from app.services.provider_health import ProviderHealthTracker
 from app.services.protocol_hooks import OPENAI_IMAGE_PATHS, ProtocolConversionHooks
 from app.services.strategy import (
     CostFirstStrategy,
@@ -92,6 +97,25 @@ def _extract_user_id(headers: dict[str, str]) -> str | None:
     return None
 
 
+# Heavy request-detail payload fields suppressed when an API Key has detail
+# logging disabled. Main-table metadata plus usage_details/error_info are
+# always retained.
+_DETAIL_PAYLOAD_FIELDS = (
+    "request_body",
+    "response_body",
+    "request_headers",
+    "response_headers",
+    "converted_request_body",
+    "upstream_response_body",
+)
+
+
+def _strip_detail_payload(log_data: RequestLogCreate) -> None:
+    """Null out the heavy detail payload fields on a log entry in place."""
+    for field in _DETAIL_PAYLOAD_FIELDS:
+        setattr(log_data, field, None)
+
+
 class ProxyService:
     """
     Proxy Core Service
@@ -110,37 +134,97 @@ class ProxyService:
 
     def __init__(
         self,
-        model_repo: ModelRepository,
-        provider_repo: ProviderRepository,
-        log_repo: LogRepository,
+        model_repo: Optional[ModelRepository] = None,
+        provider_repo: Optional[ProviderRepository] = None,
+        log_repo: Optional[LogRepository] = None,
+        *,
+        session_factory: Optional[async_sessionmaker] = None,
+        model_repo_factory: Optional[Callable[[AsyncSession], ModelRepository]] = None,
+        provider_repo_factory: Optional[
+            Callable[[AsyncSession], ProviderRepository]
+        ] = None,
+        log_repo_factory: Optional[Callable[[AsyncSession], LogRepository]] = None,
         round_robin_strategy: Optional[SelectionStrategy] = None,
         cost_first_strategy: Optional[SelectionStrategy] = None,
         priority_strategy: Optional[SelectionStrategy] = None,
         protocol_hooks: Optional[ProtocolConversionHooks] = None,
+        health_tracker: Optional[ProviderHealthTracker] = None,
     ):
         """
         Initialize Service
 
+        Two wiring modes:
+
+        - Production: pass ``session_factory`` plus ``*_repo_factory`` callables.
+          Each DB operation opens a short-lived session from the factory and
+          releases the pooled connection immediately, so streaming responses do
+          not pin a connection for the whole upstream stream.
+        - Tests/legacy: pass repo instances (``model_repo`` etc.) and no
+          ``session_factory``; the same instances are reused for every op.
+
+        The selector between modes is ``session_factory is None`` (NOT
+        ``callable()`` — Mock/AsyncMock instances are themselves callable).
+
         Args:
-            model_repo: Model Repository
-            provider_repo: Provider Repository
-            log_repo: Log Repository
+            model_repo: Model Repository instance (legacy/test mode)
+            provider_repo: Provider Repository instance (legacy/test mode)
+            log_repo: Log Repository instance (legacy/test mode)
+            session_factory: async_sessionmaker for per-op sessions (prod mode)
+            model_repo_factory: builds a ModelRepository from a session
+            provider_repo_factory: builds a ProviderRepository from a session
+            log_repo_factory: builds a LogRepository from a session
             round_robin_strategy: Optional Round Robin Strategy instance
             cost_first_strategy: Optional Cost First Strategy instance
             priority_strategy: Optional Priority Strategy instance
         """
+        self._session_factory = session_factory
+        # Legacy/test instances (used when session_factory is None). Exposed under
+        # the public names too so existing tests can assert on service.log_repo etc.
         self.model_repo = model_repo
         self.provider_repo = provider_repo
         self.log_repo = log_repo
+        self._model_repo = model_repo
+        self._provider_repo = provider_repo
+        self._log_repo = log_repo
+        # Production factories (used when session_factory is set)
+        self._model_repo_factory = model_repo_factory
+        self._provider_repo_factory = provider_repo_factory
+        self._log_repo_factory = log_repo_factory
         self.rule_engine = RuleEngine()
         # Strategy selection instances (reused for performance)
         self._round_robin_strategy = round_robin_strategy or RoundRobinStrategy()
         self._cost_first_strategy = cost_first_strategy or CostFirstStrategy()
         self._priority_strategy = priority_strategy or PriorityStrategy()
         self._protocol_hooks = protocol_hooks or ProtocolConversionHooks()
+        self._health_tracker = health_tracker
 
-    async def _write_log(self, log_data: RequestLogCreate) -> None:
-        await self.log_repo.create(log_data)
+    @asynccontextmanager
+    async def _repos(self):
+        """Yield (model_repo, provider_repo, log_repo) bound to a short-lived
+        session in production mode, or the injected legacy instances in
+        tests. The pooled connection is released when the block exits."""
+        if self._session_factory is None:
+            yield self._model_repo, self._provider_repo, self._log_repo
+            return
+        async with self._session_factory() as session:
+            yield (
+                self._model_repo_factory(session),
+                self._provider_repo_factory(session),
+                self._log_repo_factory(session),
+            )
+
+    async def _write_log(
+        self, log_data: RequestLogCreate, record_details: bool = True
+    ) -> None:
+        # When detail logging is disabled for the API Key, drop the heavy payload
+        # fields (request/response bodies and headers). Main-table metadata
+        # (tokens, cost, timing, status, model, etc.) plus usage_details and
+        # error_info are always retained. Idempotent: callers may also strip
+        # earlier (e.g. before debug logging) so the payload never leaks.
+        if not record_details:
+            _strip_detail_payload(log_data)
+        async with self._repos() as (_model_repo, _provider_repo, log_repo):
+            await log_repo.create(log_data)
 
     def _get_strategy(self, strategy_name: str) -> SelectionStrategy:
         """
@@ -249,6 +333,100 @@ class ProxyService:
             return False
         return bool(provider_options.get("no_suffix"))
 
+    async def rebuild_converted_request(
+        self, log: RequestLogModel
+    ) -> dict[str, Any]:
+        """
+        Re-run the request protocol conversion for a stored log.
+
+        The ``converted_request_body`` persisted in logs is truncated for
+        storage (see ``_smart_truncate``), so this reconstructs the full,
+        non-truncated upstream request body on demand using the same
+        conversion pipeline (hooks + ``convert_request_for_supplier``) the
+        proxy used when the request was originally forwarded.
+
+        Returns a dict with ``converted_request_body``, ``upstream_url``,
+        ``request_method`` and ``supplier_protocol``.
+        """
+        if not log.detail_available or log.request_body is None:
+            raise ServiceError(
+                message="Request detail has expired for this log",
+                code="converted_request_detail_expired",
+            )
+        if isinstance(log.request_body, dict) and log.request_body.get("_files"):
+            raise ServiceError(
+                message="Multipart requests cannot be reconstructed",
+                code="converted_request_multipart_unsupported",
+            )
+        if not log.provider_id:
+            raise ServiceError(
+                message="Provider info is missing for this log",
+                code="converted_request_provider_missing",
+            )
+
+        async with self._repos() as (_model_repo, provider_repo, _log_repo):
+            provider = await provider_repo.get_by_id(log.provider_id)
+        if not provider:
+            raise NotFoundError(
+                message="Provider for this log no longer exists",
+                code="converted_request_provider_not_found",
+            )
+
+        request_protocol = (log.request_protocol or "openai").lower()
+        path = log.request_path or ""
+        target_model = log.target_model or log.requested_model or ""
+        # Work on a copy so conversion hooks cannot mutate the fetched log.
+        body = copy.deepcopy(log.request_body)
+        is_image_path = path in OPENAI_IMAGE_PATHS
+        supplier_protocol = resolve_implementation_protocol(provider.protocol)
+        conversion_options = self._build_conversion_options(provider.provider_options)
+
+        hooked_body = await self._protocol_hooks.before_request_conversion(
+            body, request_protocol, supplier_protocol
+        )
+        if hooked_body is None:
+            hooked_body = body
+        if is_image_path:
+            hooked_image_body = (
+                await self._protocol_hooks.before_image_request_conversion(
+                    hooked_body, request_protocol, supplier_protocol, path
+                )
+            )
+            if hooked_image_body is not None:
+                hooked_body = hooked_image_body
+
+        supplier_path, supplier_body = convert_request_for_supplier(
+            request_protocol=request_protocol,
+            supplier_protocol=provider.protocol,
+            path=path,
+            body=hooked_body,
+            target_model=target_model,
+            options=conversion_options,
+        )
+        if self._use_no_suffix(provider.provider_options):
+            supplier_path = ""
+
+        hooked_supplier_body = await self._protocol_hooks.after_request_conversion(
+            supplier_body, request_protocol, supplier_protocol
+        )
+        if hooked_supplier_body is not None:
+            supplier_body = hooked_supplier_body
+        if is_image_path:
+            hooked_image_supplier_body = (
+                await self._protocol_hooks.after_image_request_conversion(
+                    supplier_body, request_protocol, supplier_protocol, path
+                )
+            )
+            if hooked_image_supplier_body is not None:
+                supplier_body = hooked_image_supplier_body
+
+        return {
+            "converted_request_body": supplier_body,
+            "upstream_url": build_upstream_url(provider.base_url, supplier_path),
+            "request_method": (log.request_method or "POST").upper(),
+            "supplier_protocol": supplier_protocol,
+        }
+
     async def _resolve_candidates(
         self,
         requested_model: str,
@@ -269,36 +447,37 @@ class ProxyService:
             tuple: (model_mapping, candidates, input_tokens, protocol, provider_mapping_by_id)
         """
         request_protocol = (request_protocol or "openai").lower()
-        model_mapping = await self.model_repo.get_mapping(requested_model)
-        if not model_mapping:
-            raise NotFoundError(
-                message=f"Model '{requested_model}' is not configured",
-                code="model_not_found",
+        async with self._repos() as (model_repo, provider_repo, _log_repo):
+            model_mapping = await model_repo.get_mapping(requested_model)
+            if not model_mapping:
+                raise NotFoundError(
+                    message=f"Model '{requested_model}' is not configured",
+                    code="model_not_found",
+                )
+
+            if not model_mapping.is_active:
+                raise ServiceError(
+                    message=f"Model '{requested_model}' is disabled",
+                    code="model_disabled",
+                )
+
+            provider_mappings = await model_repo.get_provider_mappings(
+                requested_model=requested_model,
+                is_active=True,
             )
 
-        if not model_mapping.is_active:
-            raise ServiceError(
-                message=f"Model '{requested_model}' is disabled",
-                code="model_disabled",
-            )
+            if not provider_mappings:
+                raise ServiceError(
+                    message=f"No providers configured for model '{requested_model}'",
+                    code="no_available_provider",
+                )
 
-        provider_mappings = await self.model_repo.get_provider_mappings(
-            requested_model=requested_model,
-            is_active=True,
-        )
-
-        if not provider_mappings:
-            raise ServiceError(
-                message=f"No providers configured for model '{requested_model}'",
-                code="no_available_provider",
-            )
-
-        provider_ids = [pm.provider_id for pm in provider_mappings]
-        providers: dict[int, Provider] = {}
-        for pid in provider_ids:
-            provider = await self.provider_repo.get_by_id(pid)
-            if provider:
-                providers[pid] = provider
+            provider_ids = [pm.provider_id for pm in provider_mappings]
+            providers: dict[int, Provider] = {}
+            for pid in provider_ids:
+                provider = await provider_repo.get_by_id(pid)
+                if provider:
+                    providers[pid] = provider
 
         eligible_provider_mappings = [
             pm
@@ -364,6 +543,7 @@ class ProxyService:
         body: dict[str, Any],
         *,
         force_parse_response: bool = False,
+        record_details: bool = True,
     ) -> tuple[ProviderResponse, dict[str, Any]]:
         """
         Process Proxy Request
@@ -435,7 +615,7 @@ class ProxyService:
 
         # Select strategy based on model configuration
         strategy = self._get_strategy(model_mapping.strategy)
-        retry_handler = RetryHandler(strategy)
+        retry_handler = RetryHandler(strategy, self._health_tracker)
 
         failed_attempt_logged = False
         # Track protocol conversion data for logging
@@ -462,6 +642,7 @@ class ProxyService:
                 model_cache_billing_enabled=getattr(model_mapping, "cache_billing_enabled", None),
                 model_cached_input_price=getattr(model_mapping, "cached_input_price", None),
                 model_cached_output_price=getattr(model_mapping, "cached_output_price", None),
+                model_cache_creation_input_price=getattr(model_mapping, "cache_creation_input_price", None),
                 provider_billing_mode=provider_mapping.billing_mode
                 if provider_mapping
                 else None,
@@ -487,6 +668,9 @@ class ProxyService:
                 if provider_mapping
                 else None,
                 provider_cached_output_price=getattr(provider_mapping, "cached_output_price", None)
+                if provider_mapping
+                else None,
+                provider_cache_creation_input_price=getattr(provider_mapping, "cache_creation_input_price", None)
                 if provider_mapping
                 else None,
             )
@@ -534,7 +718,7 @@ class ProxyService:
                 ),
             )
             try:
-                await self._write_log(attempt_log)
+                await self._write_log(attempt_log, record_details=record_details)
                 failed_attempt_logged = True
             except Exception:
                 logger.exception(
@@ -626,6 +810,7 @@ class ProxyService:
                     else ("raw" if same_protocol else "parsed"),
                     extra_headers=candidate.extra_headers,
                     proxy_config=proxy_config,
+                    response_timeout_seconds=candidate.response_timeout_seconds,
                 )
             except Exception as e:
                 error_msg = str(e)
@@ -786,6 +971,7 @@ class ProxyService:
             model_cache_billing_enabled=getattr(model_mapping, "cache_billing_enabled", None),
             model_cached_input_price=getattr(model_mapping, "cached_input_price", None),
             model_cached_output_price=getattr(model_mapping, "cached_output_price", None),
+            model_cache_creation_input_price=getattr(model_mapping, "cache_creation_input_price", None),
             provider_billing_mode=provider_mapping.billing_mode
             if provider_mapping
             else None,
@@ -813,20 +999,27 @@ class ProxyService:
             provider_cached_output_price=getattr(provider_mapping, "cached_output_price", None)
             if provider_mapping
             else None,
+            provider_cache_creation_input_price=getattr(provider_mapping, "cache_creation_input_price", None)
+            if provider_mapping
+            else None,
         )
         # Extract cached tokens from usage details
         cached_input_tokens = None
+        cache_creation_input_tokens = None
         if usage_details:
             cached_input_tokens = (
-                usage_details.get("cached_tokens")
-                or usage_details.get("cache_read_input_tokens")
+                usage_details.get("cache_read_input_tokens")
+                if usage_details.get("cache_read_input_tokens") is not None
+                else usage_details.get("cached_tokens")
             )
+            cache_creation_input_tokens = usage_details.get("cache_creation_input_tokens")
         cost = calculate_cost_from_billing(
             billing=billing,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             image_count=image_count,
             cached_input_tokens=cached_input_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
         )
         log_data = RequestLogCreate(
             request_time=request_time,
@@ -879,6 +1072,11 @@ class ProxyService:
             ),
         )
 
+        # Strip detail payload before debug logging so a key with detail
+        # logging disabled never leaks bodies/headers into application logs.
+        if not record_details:
+            _strip_detail_payload(log_data)
+
         # DEBUG: Log request details
         try:
             logger.debug(f"Request Log: {log_data.model_dump_json()}")
@@ -887,7 +1085,7 @@ class ProxyService:
             logger.debug(f"Request Log: {log_data.json()}")
 
         if result.success or not failed_attempt_logged:
-            await self._write_log(log_data)
+            await self._write_log(log_data, record_details=record_details)
 
         return result.response, {
             "trace_id": trace_id,
@@ -910,6 +1108,8 @@ class ProxyService:
         method: str,
         headers: dict[str, str],
         body: dict[str, Any],
+        *,
+        record_details: bool = True,
     ) -> tuple[ProviderResponse, AsyncGenerator[bytes, None], dict[str, Any]]:
         """
         Process Streaming Proxy Request
@@ -973,7 +1173,7 @@ class ProxyService:
 
         # Select strategy based on model configuration
         strategy = self._get_strategy(model_mapping.strategy)
-        retry_handler = RetryHandler(strategy)
+        retry_handler = RetryHandler(strategy, self._health_tracker)
 
         # Track protocol conversion data for logging
         stream_conversion_data: dict[str, Any] = {
@@ -1073,6 +1273,7 @@ class ProxyService:
                 target_model=candidate.target_model,
                 extra_headers=candidate.extra_headers,
                 proxy_config=proxy_config,
+                response_timeout_seconds=candidate.response_timeout_seconds,
             )
 
             async def wrapped() -> AsyncGenerator[tuple[bytes, ProviderResponse], None]:
@@ -1121,7 +1322,19 @@ class ProxyService:
 
                     async for event in process_chunk(first_chunk):
                         yield event
-                    async for chunk, _ in upstream_gen:
+                    async for chunk, resp in upstream_gen:
+                        if not resp.is_success:
+                            # first_resp is the same object surfaced as initial_response;
+                            # mutate it so final stream logging records the failure.
+                            first_resp.status_code = resp.status_code
+                            first_resp.headers.update(resp.headers)
+                            first_resp.error = resp.error or "Upstream stream interrupted"
+                            first_resp.body = resp.body
+                            first_resp.total_time_ms = resp.total_time_ms
+                            raise ServiceError(
+                                message=first_resp.error,
+                                code="upstream_stream_failed",
+                            )
                         async for event in process_chunk(chunk):
                             yield event
 
@@ -1174,6 +1387,9 @@ class ProxyService:
                             yield hooked_out_chunk, first_resp
                 except Exception as e:
                     err = str(e)
+                    if first_resp.is_success:
+                        first_resp.status_code = 502
+                    first_resp.error = err
                     logger.error(
                         "Error during stream response conversion: provider_id=%s, provider_name=%s, "
                         "request_protocol=%s, supplier_protocol=%s, error=%s",
@@ -1223,6 +1439,7 @@ class ProxyService:
                 model_cache_billing_enabled=getattr(model_mapping, "cache_billing_enabled", None),
                 model_cached_input_price=getattr(model_mapping, "cached_input_price", None),
                 model_cached_output_price=getattr(model_mapping, "cached_output_price", None),
+                model_cache_creation_input_price=getattr(model_mapping, "cache_creation_input_price", None),
                 provider_billing_mode=provider_mapping.billing_mode
                 if provider_mapping
                 else None,
@@ -1248,6 +1465,9 @@ class ProxyService:
                 if provider_mapping
                 else None,
                 provider_cached_output_price=getattr(provider_mapping, "cached_output_price", None)
+                if provider_mapping
+                else None,
+                provider_cache_creation_input_price=getattr(provider_mapping, "cache_creation_input_price", None)
                 if provider_mapping
                 else None,
             )
@@ -1296,7 +1516,7 @@ class ProxyService:
             )
             try:
                 with anyio.CancelScope(shield=True):
-                    await self._write_log(attempt_log)
+                    await self._write_log(attempt_log, record_details=record_details)
             except Exception:
                 pass
 
@@ -1401,6 +1621,7 @@ class ProxyService:
                     model_cache_billing_enabled=getattr(model_mapping, "cache_billing_enabled", None),
                     model_cached_input_price=getattr(model_mapping, "cached_input_price", None),
                     model_cached_output_price=getattr(model_mapping, "cached_output_price", None),
+                    model_cache_creation_input_price=getattr(model_mapping, "cache_creation_input_price", None),
                     provider_billing_mode=provider_mapping.billing_mode
                     if provider_mapping
                     else None,
@@ -1428,20 +1649,27 @@ class ProxyService:
                     provider_cached_output_price=getattr(provider_mapping, "cached_output_price", None)
                     if provider_mapping
                     else None,
+                    provider_cache_creation_input_price=getattr(provider_mapping, "cache_creation_input_price", None)
+                    if provider_mapping
+                    else None,
                 )
                 # Extract cached tokens from stream usage details
                 stream_cached_input_tokens = None
+                stream_cache_creation_input_tokens = None
                 if usage_details:
                     stream_cached_input_tokens = (
-                        usage_details.get("cached_tokens")
-                        or usage_details.get("cache_read_input_tokens")
+                        usage_details.get("cache_read_input_tokens")
+                        if usage_details.get("cache_read_input_tokens") is not None
+                        else usage_details.get("cached_tokens")
                     )
+                    stream_cache_creation_input_tokens = usage_details.get("cache_creation_input_tokens")
                 cost = calculate_cost_from_billing(
                     billing=billing,
                     input_tokens=input_tokens,
                     output_tokens=usage_result.output_tokens,
                     image_count=image_count,
                     cached_input_tokens=stream_cached_input_tokens,
+                    cache_creation_input_tokens=stream_cache_creation_input_tokens,
                 )
                 raw_stream_text = (
                     b"".join(raw_stream_chunks).decode("utf-8", errors="replace")
@@ -1515,6 +1743,11 @@ class ProxyService:
                     ),
                 )
 
+                # Strip detail payload before debug logging so a key with detail
+                # logging disabled never leaks bodies/headers into application logs.
+                if not record_details:
+                    _strip_detail_payload(log_data)
+
                 # DEBUG: Log request details
                 try:
                     logger.debug(f"Request Log: {log_data.model_dump_json()}")
@@ -1525,7 +1758,7 @@ class ProxyService:
                 # client disconnect triggers cancellation, use shield to ensure logs are written to DB
                 try:
                     with anyio.CancelScope(shield=True):
-                        await self._write_log(log_data)
+                        await self._write_log(log_data, record_details=record_details)
                 except Exception:
                     # Log writing failure does not affect main flow
                     pass

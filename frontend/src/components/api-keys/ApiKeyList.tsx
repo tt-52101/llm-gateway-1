@@ -169,9 +169,19 @@ export function ApiKeyList({
                 {formatUsdCompact(apiKey.monthly_cost)}
               </TableCell>
               <TableCell>
-                <Badge className={status.className}>
-                  {apiKey.is_active ? t('list.status.active') : t('list.status.inactive')}
-                </Badge>
+                <div className="flex items-center gap-1.5">
+                  <Badge className={status.className}>
+                    {apiKey.is_active ? t('list.status.active') : t('list.status.inactive')}
+                  </Badge>
+                  {!apiKey.record_details && (
+                    <span
+                      className="inline-flex text-muted-foreground"
+                      title={t('list.detailsOff')}
+                    >
+                      <EyeOff className="h-3.5 w-3.5" suppressHydrationWarning />
+                    </span>
+                  )}
+                </div>
               </TableCell>
               <TableCell className="text-muted-foreground">
                 {formatDateTime(apiKey.created_at)}

@@ -133,7 +133,8 @@
       "status": {
         "active": "启用",
         "inactive": "停用"
-      }
+      },
+      "detailsOff": "未记录请求明细"
     },
     "toasts": {
       "copied": "已复制 API Key 到剪贴板",
@@ -153,7 +154,9 @@
       "enabledStatusLabel": "启用状态",
       "autoGenerateHint": "API Key 将由系统自动生成，请在创建后立即保存",
       "keyNameLabel": "API Key 名称",
-      "keyLabel": "API Key"
+      "keyLabel": "API Key",
+      "recordDetailsLabel": "记录请求明细",
+      "recordDetailsHint": "关闭后不记录请求/响应体和请求头，仍保留 Token、费用等统计。"
     },
     "success": {
       "title": "API Key 创建成功",
@@ -288,6 +291,12 @@
         "placeholderNew": "输入供应商 API Key",
         "placeholderEdit": "留空以保持不变"
       },
+      "responseTimeout": {
+        "label": "无响应超时（秒）",
+        "required": "请输入无响应超时时间",
+        "min": "无响应超时时间必须大于 0 秒",
+        "help": "默认 1800 秒。非流式请求超过该时间未响应会判定超时；流式请求连续两次响应间隔超过该时间也会判定超时。"
+      },
       "extraHeaders": {
         "label": "额外请求头",
         "add": "添加",
@@ -310,6 +319,9 @@
         "urlLabel": "代理 URL",
         "urlPlaceholderNew": "socks5://user:pass@host:port",
         "urlPlaceholderEdit": "留空以保持不变"
+      },
+      "advanced": {
+        "label": "高级"
       },
       "status": {
         "label": "启用状态"
@@ -438,6 +450,8 @@
       "protocolTitle": "协议：{protocol}",
       "configured": "已配置",
       "providerDisabledTooltip": "当前模型的供应商已禁用",
+      "healthDegraded": "已降级",
+      "healthDegradedTooltip": "当前健康窗口共 {samples} 次请求，其中 {failures} 次失败，失败率 {failureRate}。该供应商仍会作为后备候选。",
       "priorityPromoted": "已将该模型设为最高优先级并重新排序",
       "priorityPromoteFailed": "更新优先级失败",
       "noProviders": "未配置供应商，点击上方按钮添加",
@@ -460,7 +474,7 @@
         "tieredPreview": "分档：{preview}{more}",
         "tieredPreviewMore": " (+{count})",
         "tieredEntry": "≤{max}: {input}/{output}",
-        "cacheSuffix": "缓存：{cachedInput}/{cachedOutput}",
+        "cacheSuffix": "缓存：读 {cachedInput}/写 {cacheCreationInput}/{cachedOutput}",
         "inheritModel": "继承模型默认值"
       }
     },
@@ -525,11 +539,13 @@
       "noProviderModelsMatched": "没有匹配的模型。",
       "useSelectedModel": "使用所选模型",
       "cacheBilling": "缓存计费",
-      "cachedInputPrice": "缓存写入价格（美元/1M tokens）",
-      "cachedOutputPrice": "缓存读取价格（美元/1M tokens）",
+      "cachedInputPrice": "缓存读取价格（美元/1M tokens）",
+      "cachedOutputPrice": "缓存输出价格（美元/1M tokens）",
+      "cacheCreationInputPrice": "缓存写入价格（美元/1M tokens）",
       "cachedPricePlaceholder": "留空则同标准价格",
-      "tierCachedInputPrice": "缓存写入（美元/1M）",
-      "tierCachedOutputPrice": "缓存读取（美元/1M）"
+      "tierCachedInputPrice": "缓存读取（美元/1M）",
+      "tierCachedOutputPrice": "缓存输出（美元/1M）",
+      "tierCacheCreationInputPrice": "缓存写入（美元/1M）"
     },
     "ruleBuilder": {
       "title": "🎯 匹配规则",
@@ -744,6 +760,28 @@
       "request": "请求",
       "response": "响应",
       "headers": "请求头",
+      "prompt": {
+        "tab": "提示词",
+        "system": "系统提示",
+        "parameters": "参数",
+        "messages": "消息",
+        "tools": "工具",
+        "toolsCount": "{count} 个工具",
+        "toolCall": "工具调用",
+        "toolResult": "工具结果",
+        "arguments": "参数",
+        "schema": "Schema",
+        "showSchema": "展开 Schema",
+        "hideSchema": "收起 Schema",
+        "image": "[图片]",
+        "empty": "该请求没有可展示的对话消息。",
+        "role": {
+          "system": "系统",
+          "user": "用户",
+          "assistant": "助手",
+          "tool": "工具"
+        }
+      },
       "retry": "Retry",
       "retryConfirmTitle": "确认重试请求",
       "retryConfirmDescription": "将按照当前日志记录的原始请求再次发起一次调用，是否继续？",
@@ -759,6 +797,8 @@
       "retryUnsupported": "当前日志不支持重试",
       "detailExpiredTitle": "请求详情已过期",
       "detailExpiredDescription": "该日志的摘要信息仍然保留，但请求体、请求头、响应体等详细内容已按保留策略自动清理。",
+      "detailNotRecordedTitle": "未记录请求明细",
+      "detailNotRecordedDescription": "该 API Key 已关闭明细记录，请求/响应体和请求头未被保存。",
       "detailExpiredRetryUnsupported": "当前日志的请求详情已过期，无法重试",
       "detailExpiredPlaygroundUnsupported": "当前日志的请求详情已过期，无法打开 Playground",
       "detailExpiredCurlUnsupported": "当前日志的请求详情已过期，无法生成 cURL",

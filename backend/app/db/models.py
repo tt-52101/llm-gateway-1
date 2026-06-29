@@ -67,6 +67,10 @@ class ServiceProvider(Base):
     proxy_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Proxy URL (schema://auth@host:port)
     proxy_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # No-response timeout for upstream model requests, in seconds
+    response_timeout_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1800
+    )
     # Is Active
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Creation Time
@@ -157,6 +161,10 @@ class ModelMapping(Base):
     cache_billing_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     cached_input_price: Mapped[Optional[float]] = mapped_column(Numeric(12, 4), nullable=True)
     cached_output_price: Mapped[Optional[float]] = mapped_column(Numeric(12, 4), nullable=True)
+    # Cache creation (cache WRITE) price, applied to cache_creation_input_tokens.
+    cache_creation_input_price: Mapped[Optional[float]] = mapped_column(
+        Numeric(12, 4), nullable=True
+    )
     # Is Active
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Creation Time
@@ -220,6 +228,10 @@ class ModelMappingProvider(Base):
     cache_billing_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     cached_input_price: Mapped[Optional[float]] = mapped_column(Numeric(12, 4), nullable=True)
     cached_output_price: Mapped[Optional[float]] = mapped_column(Numeric(12, 4), nullable=True)
+    # Cache creation (cache WRITE) price, applied to cache_creation_input_tokens.
+    cache_creation_input_price: Mapped[Optional[float]] = mapped_column(
+        Numeric(12, 4), nullable=True
+    )
     # Priority (Lower value means higher priority)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     # Weight (Used for weighted round-robin, currently unused)
@@ -260,6 +272,12 @@ class ApiKey(Base):
     key_value: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     # Is Active
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Whether to record request detail payload (bodies & headers) for this key.
+    # When False, request_log_details bodies/headers are not stored; main-table
+    # metadata (tokens, cost, timing, status, model, etc.) is always recorded.
+    record_details: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default="1"
+    )
     # Creation Time
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=utc_now_naive, nullable=False
