@@ -183,6 +183,7 @@ def _run_migrations(sync_conn) -> None:
             "cached_input_cost": "cached_input_cost NUMERIC(12,4)",
             "cached_output_cost": "cached_output_cost NUMERIC(12,4)",
             "user_id": "user_id VARCHAR(255)",
+            "is_completed": "is_completed BOOLEAN DEFAULT TRUE",
         },
     )
     ensure_columns(
