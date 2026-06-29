@@ -26,9 +26,10 @@ from app.common.provider_protocols import (
     OPENAI_RESPONSES_PROTOCOL,
     resolve_implementation_protocol,
 )
-from app.common.errors import AppError, ValidationError
+from app.common.errors import AppError, NotFoundError, ValidationError
 from app.common.utils import try_parse_json_object
 from app.config import get_settings
+from app.services.active_requests import active_requests
 from app.domain.log import (
     RequestLogQuery,
     RequestLogResponse,
@@ -575,6 +576,32 @@ async def get_log(
         )
     except AppError as e:
         return JSONResponse(content=e.to_dict(), status_code=e.status_code)
+
+
+@router.post("/{log_id}/cancel")
+async def cancel_request(
+    log_id: int,
+    log_service: LogServiceDep,
+):
+    """
+    Cancel an in-progress request.
+
+    Cancels the underlying asyncio task and marks the log as completed.
+    """
+    # Try to cancel the underlying task first
+    task_cancelled = await active_requests.cancel(log_id)
+
+    # Mark the log as cancelled in the database
+    try:
+        await log_service.cancel(log_id)
+    except NotFoundError:
+        if not task_cancelled:
+            raise NotFoundError(
+                message=f"No in-progress request found with id {log_id}",
+                code="request_not_found_or_completed",
+            )
+
+    return {"status": "cancelled", "log_id": log_id}
 
 
 @router.get(
