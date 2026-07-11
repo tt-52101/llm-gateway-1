@@ -43,7 +43,7 @@ import {
   formatDuration,
   formatUsd,
 } from "@/lib/utils";
-import { ConfirmDialog, JsonViewer } from "@/components/common";
+import { ConfirmDialog, JsonViewer, TokenCount } from "@/components/common";
 import {
   StreamJsonViewer,
   isStreamPayload,
@@ -793,13 +793,17 @@ export function LogDetail({ log }: LogDetailProps) {
                 <span className="text-muted-foreground">
                   {t("detail.input")}
                 </span>
-                <span className="font-medium">{log.input_tokens ?? 0}</span>
+                <span className="font-medium">
+                  <TokenCount value={log.input_tokens ?? 0} />
+                </span>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">
                   {t("detail.output")}
                 </span>
-                <span className="font-medium">{log.output_tokens ?? 0}</span>
+                <span className="font-medium">
+                  <TokenCount value={log.output_tokens ?? 0} />
+                </span>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span className="text-muted-foreground">
@@ -812,7 +816,9 @@ export function LogDetail({ log }: LogDetailProps) {
                   {t("detail.tokens")}
                 </span>
                 <span className="font-medium">
-                  {(log.input_tokens ?? 0) + (log.output_tokens ?? 0)}
+                  <TokenCount
+                    value={(log.input_tokens ?? 0) + (log.output_tokens ?? 0)}
+                  />
                 </span>
               </div>
               <div
@@ -845,7 +851,7 @@ export function LogDetail({ log }: LogDetailProps) {
                   >
                     <span className="text-muted-foreground">{item.label}</span>
                     <span className="font-medium">
-                      {item.value.toLocaleString()}
+                      <TokenCount value={item.value} />
                     </span>
                   </div>
                 ))}

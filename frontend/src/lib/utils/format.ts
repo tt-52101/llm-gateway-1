@@ -103,6 +103,38 @@ export function formatNumber(num: number | null | undefined): string {
 }
 
 /**
+ * Format a token count for display.
+ *
+ * - < 1000: exact value.
+ * - >= 1000: thousands with `K` suffix, two decimals (e.g. `1.23K`).
+ * - >= 1_000_000: millions with `M` suffix, two decimals (e.g. `4.56M`).
+ *
+ * Pair with {@link tokenCountTooltip} to expose the exact value on hover when the
+ * display has been abbreviated.
+ */
+export function formatTokenCount(num: number | null | undefined): string {
+  if (num === null || num === undefined) return '-';
+  const n = Number(num);
+  if (!Number.isFinite(n)) return '-';
+  const abs = Math.abs(n);
+  if (abs < 1_000) return String(n);
+  if (abs < 1_000_000) return `${(n / 1_000).toFixed(2)}K`;
+  return `${(n / 1_000_000).toFixed(2)}M`;
+}
+
+/**
+ * Exact, thousand-separated token count to surface in a tooltip when the value has
+ * been abbreviated by {@link formatTokenCount}. Returns `undefined` when the value is
+ * shown in full (i.e. < 1000) so callers can skip rendering a redundant tooltip.
+ */
+export function tokenCountTooltip(num: number | null | undefined): string | undefined {
+  if (num === null || num === undefined) return undefined;
+  const n = Number(num);
+  if (!Number.isFinite(n) || Math.abs(n) < 1_000) return undefined;
+  return n.toLocaleString(undefined);
+}
+
+/**
  * Format USD cost with 4 decimals
  */
 export function formatUsd(cost: number | null | undefined): string {

@@ -11,3 +11,4 @@ export * from './Sidebar';
 export * from './RuleBuilder';
 export * from './LanguageSwitcher';
 export * from './IntlProvider';
+export * from './TokenCount';
