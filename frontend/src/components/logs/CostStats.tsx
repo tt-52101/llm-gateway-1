@@ -7,9 +7,9 @@
 
 import React, { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { LoadingSpinner } from "@/components/common";
+import { LoadingSpinner, TokenCount } from "@/components/common";
 import { LogCostStatsResponse } from "@/types";
-import { formatNumber, formatUsd } from "@/lib/utils";
+import { formatNumber, formatTokenCount, formatUsd, tokenCountTooltip } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Maximize2, RefreshCw } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -54,14 +54,6 @@ type Segment = {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
-
-function formatCompactNumber(value: number) {
-  if (!Number.isFinite(value)) return "0";
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return String(Math.round(value));
-}
 
 function parseBucketToLocalDate(bucket: string) {
   const trimmed = bucket.trim();
@@ -293,8 +285,10 @@ function TrendCard({
   segments,
   avgLabel,
   avgValue,
+  avgTooltip,
   totalLabel,
   totalValue,
+  totalTooltip,
   bucketUnit,
   noDataLabel,
   showDetailsLabel,
@@ -305,8 +299,10 @@ function TrendCard({
   segments: Segment[];
   avgLabel: string;
   avgValue: string;
+  avgTooltip?: string;
   totalLabel: string;
   totalValue: string;
+  totalTooltip?: string;
   bucketUnit: "hour" | "day";
   noDataLabel: string;
   showDetailsLabel: (title: string, bucket: string) => string;
@@ -349,18 +345,40 @@ function TrendCard({
           showDetailsLabel={showDetailsLabel}
         />
 
-        <div className="mt-1 flex items-end justify-between gap-6">
-          <div className="min-w-0">
-            <div className="text-xs text-muted-foreground">{avgLabel}</div>
-            <div className="mt-1 font-mono text-sm font-medium">{avgValue}</div>
-          </div>
-          <div className="min-w-0 text-right">
-            <div className="text-xs text-muted-foreground">{totalLabel}</div>
-            <div className="mt-1 font-mono text-sm font-medium">
-              {totalValue}
+        <TooltipProvider>
+          <div className="mt-1 flex items-end justify-between gap-6">
+            <div className="min-w-0">
+              <div className="text-xs text-muted-foreground">{avgLabel}</div>
+              <div className="mt-1 font-mono text-sm font-medium">
+                {avgTooltip ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>{avgValue}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>{avgTooltip}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  avgValue
+                )}
+              </div>
+            </div>
+            <div className="min-w-0 text-right">
+              <div className="text-xs text-muted-foreground">{totalLabel}</div>
+              <div className="mt-1 font-mono text-sm font-medium">
+                {totalTooltip ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>{totalValue}</span>
+                    </TooltipTrigger>
+                    <TooltipContent>{totalTooltip}</TooltipContent>
+                  </Tooltip>
+                ) : (
+                  totalValue
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        </TooltipProvider>
       </div>
 
       <DialogContent className="max-w-5xl p-0">
@@ -546,13 +564,13 @@ export function CostStats({
         label: t("costStats.input"),
         colorClassName: "bg-indigo-500/80",
         getValue: (p) => p.input_tokens,
-        formatValue: (v) => formatCompactNumber(v),
+        formatValue: (v) => formatTokenCount(v),
       },
       {
         label: t("costStats.output"),
         colorClassName: "bg-cyan-400/80",
         getValue: (p) => p.output_tokens,
-        formatValue: (v) => formatCompactNumber(v),
+        formatValue: (v) => formatTokenCount(v),
       },
     ],
     [t],
@@ -652,21 +670,23 @@ export function CostStats({
                 points={computedTrend}
                 segments={tokenSegments}
                 avgLabel={avgTrendLabel}
-                avgValue={
-                  computedTrend.length > 0
-                    ? formatCompactNumber(
-                        (stats.summary.input_tokens +
-                          stats.summary.output_tokens) /
-                          computedTrend.length,
-                      )
-                    : formatCompactNumber(
-                        (stats.summary.input_tokens +
-                          stats.summary.output_tokens) /
-                          safeRangeDays,
-                      )
-                }
+                avgValue={formatTokenCount(
+                  (stats.summary.input_tokens + stats.summary.output_tokens) /
+                    (computedTrend.length > 0
+                      ? computedTrend.length
+                      : safeRangeDays),
+                )}
+                avgTooltip={tokenCountTooltip(
+                  (stats.summary.input_tokens + stats.summary.output_tokens) /
+                    (computedTrend.length > 0
+                      ? computedTrend.length
+                      : safeRangeDays),
+                )}
                 totalLabel={rangeLabelText}
-                totalValue={formatCompactNumber(
+                totalValue={formatTokenCount(
+                  stats.summary.input_tokens + stats.summary.output_tokens,
+                )}
+                totalTooltip={tokenCountTooltip(
                   stats.summary.input_tokens + stats.summary.output_tokens,
                 )}
                 bucketUnit={bucket}
@@ -728,13 +748,13 @@ export function CostStats({
               <div className="rounded-md border bg-muted/30 p-3">
                 <div className="text-muted-foreground">{t("costStats.inTokens")}</div>
                 <div className="mt-1 font-mono font-medium">
-                  {formatNumber(stats.summary.input_tokens)}
+                  <TokenCount value={stats.summary.input_tokens} />
                 </div>
               </div>
               <div className="rounded-md border bg-muted/30 p-3">
                 <div className="text-muted-foreground">{t("costStats.outTokens")}</div>
                 <div className="mt-1 font-mono font-medium">
-                  {formatNumber(stats.summary.output_tokens)}
+                  <TokenCount value={stats.summary.output_tokens} />
                 </div>
               </div>
             </div>
@@ -839,7 +859,7 @@ export function CostStats({
                               </span>
                             </span>
                             <span className="shrink-0 font-mono text-xs">
-                              {formatCompactNumber(totalTokens)}
+                              <TokenCount value={totalTokens} />
                             </span>
                           </div>
                           <div className="h-2 w-full rounded bg-muted">
