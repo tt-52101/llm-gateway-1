@@ -134,7 +134,9 @@
         "active": "启用",
         "inactive": "停用"
       },
-      "detailsOff": "未记录请求明细"
+      "detailsOff": "未记录请求明细",
+      "mcpAdmin": "MCP 管理员",
+      "mcpAdminTip": "该 Key 拥有 MCP 管理（系统管理员）权限"
     },
     "toasts": {
       "copied": "已复制 API Key 到剪贴板",
@@ -156,7 +158,13 @@
       "keyNameLabel": "API Key 名称",
       "keyLabel": "API Key",
       "recordDetailsLabel": "记录请求明细",
-      "recordDetailsHint": "关闭后不记录请求/响应体和请求头，仍保留 Token、费用等统计。"
+      "recordDetailsHint": "关闭后不记录请求/响应体和请求头，仍保留 Token、费用等统计。",
+      "mcpAdminLabel": "MCP 管理权限",
+      "mcpAdminWarning": "警告：授予 MCP 管理权限等同于将该 Key 变为系统管理员。它可通过 MCP 接口读取全部请求/响应日志、查看供应商配置并管理 API Key。请仅授予受信任的自动化 Agent。",
+      "mcpAdminConfirmTitle": "确认授予 MCP 管理权限？",
+      "mcpAdminConfirmDescription": "此操作等同于将该 Key 设为系统管理员，且只能在管理后台执行。",
+      "mcpAdminConfirmPrompt": "请输入 Key 名称「{name}」以确认",
+      "mcpAdminConfirmButton": "授予管理权限"
     },
     "success": {
       "title": "API Key 创建成功",
@@ -631,6 +639,28 @@
       "importFailed": "导入失败：{message}",
       "importFailedUnknown": "导入失败，发生未知错误",
       "exportFailed": "导出失败"
+    },
+    "availability": {
+      "title": "可用性",
+      "subtitle": "{provider} · {model}",
+      "available": "正常可用",
+      "availableDesc": "按优先级与权重正常参与调度。",
+      "paused": "临时暂停",
+      "pausedDesc": "仍作为候选，但排到最后——仅当其他供应商全部失败后才会用到。时间窗口结束后自动恢复。",
+      "disabled": "永久停用",
+      "disabledDesc": "在重新启用之前，不参与调度。",
+      "durationLabel": "暂停时长",
+      "durationMinutes": "{minutes} 分钟",
+      "durationHours": "{hours} 小时",
+      "customDuration": "自定义",
+      "customPlaceholder": "分钟数",
+      "minutesUnit": "分钟",
+      "overrideHint": "保存后将以新的时长覆盖当前的暂停窗口。",
+      "remainingMinutes": "剩余 {minutes} 分钟",
+      "remainingHours": "剩余 {hours} 小时",
+      "remainingHoursMinutes": "剩余 {hours} 小时 {minutes} 分钟",
+      "pausedBadge": "已暂停 · {remaining}",
+      "pausedStatusTooltip": "临时暂停中：会优先调度其他供应商，仅当它们全部失败时才会用到该供应商。窗口结束后自动恢复。"
     }
   },
   "logs": {
@@ -680,8 +710,8 @@
       "streamRequest": "流式请求",
       "viewDetails": "查看详情",
       "costTooltip": "输入：{input}\n输出：{output}",
-      "inTokens": "输入：{count}",
-      "outTokens": "输出：{count}",
+      "inTokens": "输入：",
+      "outTokens": "输出：",
       "userId": "用户：{userId}",
       "retry": "重试：{count}",
       "retryHint": "查看 {count} 次失败的供应商调用",

@@ -35,7 +35,7 @@ import { RequestLog } from '@/types';
 import { formatDateTime, formatDuration, getStatusColor, formatUsd } from '@/lib/utils';
 import { useTranslations } from 'next-intl';
 import { useCancelLog } from '@/lib/hooks/useLogs';
-import { ConfirmDialog } from '@/components/common';
+import { ConfirmDialog, TokenCount } from '@/components/common';
 import { toast } from 'sonner';
 
 interface LogListProps {
@@ -209,9 +209,13 @@ export function LogList({ logs, onView }: LogListProps) {
                     <span className="text-xs text-muted-foreground">—</span>
                   ) : (
                     <div className="flex flex-col text-xs">
-                      <span>{t('list.inTokens', { count: log.input_tokens || 0 })}</span>
-                      <span className="text-muted-foreground">
-                        {t('list.outTokens', { count: log.output_tokens || 0 })}
+                      <span className="inline-flex items-center gap-1">
+                        {t('list.inTokens')}
+                        <TokenCount value={log.input_tokens || 0} />
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-muted-foreground">
+                        {t('list.outTokens')}
+                        <TokenCount value={log.output_tokens || 0} />
                       </span>
                     </div>
                   )}

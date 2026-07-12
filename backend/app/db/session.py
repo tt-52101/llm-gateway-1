@@ -162,6 +162,7 @@ def _run_migrations(sync_conn) -> None:
             "cached_input_price": "cached_input_price NUMERIC(12,4)",
             "cached_output_price": "cached_output_price NUMERIC(12,4)",
             "cache_creation_input_price": "cache_creation_input_price NUMERIC(12,4)",
+            "paused_until": "paused_until TIMESTAMP",
         },
     )
     ensure_columns(
@@ -217,6 +218,7 @@ def _run_migrations(sync_conn) -> None:
         "api_keys",
         {
             "record_details": "record_details BOOLEAN DEFAULT TRUE",
+            "is_mcp_admin": "is_mcp_admin BOOLEAN DEFAULT FALSE",
         },
     )
     _drop_request_logs_provider_fk(sync_conn, inspector)

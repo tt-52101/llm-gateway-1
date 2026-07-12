@@ -5,6 +5,7 @@ Defines data structures used by the rule engine.
 """
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Optional
 
 
@@ -134,3 +135,6 @@ class CandidateProvider:
     model_per_image_price: Optional[float] = None
     model_tiered_pricing: Optional[list[Any]] = None
     provider_mapping_id: Optional[int] = None
+    # Temporary pause window end (UTC). When set to a future time, this
+    # candidate is scheduled last (after all non-paused candidates).
+    paused_until: Optional[datetime] = None

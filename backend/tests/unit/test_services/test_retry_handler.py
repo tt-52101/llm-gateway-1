@@ -305,3 +305,105 @@ async def test_unattempted_stream_fallback_does_not_advance_weight_counter():
         assert chunks[-1][1].is_success is True
 
     assert fallback_provider_ids == [2, 3]
+
+
+def _paused_candidates(paused_until):
+    """Three candidates A, C active and B paused (paused_until)."""
+    return [
+        CandidateProvider(
+            provider_mapping_id=401,
+            provider_id=1,
+            provider_name="A",
+            base_url="https://a.example.com",
+            protocol="openai",
+            api_key="k1",
+            target_model="model-a",
+            priority=0,
+        ),
+        CandidateProvider(
+            provider_mapping_id=402,
+            provider_id=2,
+            provider_name="B-paused",
+            base_url="https://b.example.com",
+            protocol="openai",
+            api_key="k2",
+            target_model="model-b",
+            priority=1,
+            paused_until=paused_until,
+        ),
+        CandidateProvider(
+            provider_mapping_id=403,
+            provider_id=3,
+            provider_name="C",
+            base_url="https://c.example.com",
+            protocol="openai",
+            api_key="k3",
+            target_model="model-c",
+            priority=2,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_paused_candidate_scheduled_last():
+    """A candidate paused into the future is ordered after all active ones."""
+    from datetime import timedelta
+    from app.common.time import utc_now
+
+    handler = RetryHandler(PriorityStrategy())
+    candidates = _paused_candidates(utc_now() + timedelta(hours=1))
+
+    ordered = await handler.get_ordered_candidates(candidates, "test-model")
+    ids = [c.provider_mapping_id for c in ordered]
+
+    # B (402) is paused, so it must come after both active A (401) and C (403).
+    assert ids[-1] == 402
+    assert set(ids[:-1]) == {401, 403}
+
+
+@pytest.mark.asyncio
+async def test_expired_pause_is_treated_as_active():
+    """A paused_until in the past no longer deprioritizes the candidate."""
+    from datetime import timedelta
+    from app.common.time import utc_now
+
+    handler = RetryHandler(PriorityStrategy())
+    candidates = _paused_candidates(utc_now() - timedelta(hours=1))
+
+    ordered = await handler.get_ordered_candidates(candidates, "test-model")
+    ids = [c.provider_mapping_id for c in ordered]
+
+    # Expired pause => normal priority order 401, 402, 403.
+    assert ids == [401, 402, 403]
+
+
+@pytest.mark.asyncio
+async def test_paused_candidate_still_tried_when_active_fail():
+    """When every active provider fails, the paused one is used as last resort."""
+    from datetime import timedelta
+    from app.common.time import utc_now
+
+    handler = RetryHandler(PriorityStrategy())
+    handler.max_retries = 1
+    candidates = _paused_candidates(utc_now() + timedelta(hours=1))
+    tried: list[int] = []
+
+    async def forward_fn(candidate):
+        tried.append(candidate.provider_mapping_id)
+        # Active providers (A, C) fail with client error; paused B succeeds.
+        if candidate.provider_mapping_id == 402:
+            return ProviderResponse(status_code=200, body={"ok": True})
+        return ProviderResponse(status_code=400, body={"err": "bad"})
+
+    result = await handler.execute_with_retry(
+        candidates=candidates,
+        requested_model="test-model",
+        forward_fn=forward_fn,
+    )
+
+    assert result.success is True
+    assert result.final_provider.provider_mapping_id == 402
+    # Paused B is only reached after both active providers were tried.
+    assert tried[-1] == 402
+    assert set(tried[:-1]) == {401, 403}
+

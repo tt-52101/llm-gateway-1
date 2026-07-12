@@ -238,6 +238,12 @@ class ModelMappingProvider(Base):
     weight: Mapped[int] = mapped_column(Integer, default=1)
     # Is Active
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Temporary pause window end (UTC, naive). When set to a future time, this
+    # mapping is still a candidate but scheduled last (after all non-paused
+    # mappings). NULL or a past value means normally available.
+    paused_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
     # Creation Time
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=utc_now_naive, nullable=False
@@ -246,7 +252,7 @@ class ModelMappingProvider(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False
     )
-    
+
     # Relationships
     provider: Mapped["ServiceProvider"] = relationship(
         "ServiceProvider", back_populates="model_mappings"
@@ -277,6 +283,13 @@ class ApiKey(Base):
     # metadata (tokens, cost, timing, status, model, etc.) is always recorded.
     record_details: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, server_default="1"
+    )
+    # Whether this key is granted MCP admin capability.
+    # WARNING: A key with is_mcp_admin=True has administrator-level access via
+    # the MCP interface (read all request/response logs, provider configs, and
+    # manage API keys). Grant it only to trusted automation agents.
+    is_mcp_admin: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="0"
     )
     # Creation Time
     created_at: Mapped[datetime] = mapped_column(
