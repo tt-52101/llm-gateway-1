@@ -365,3 +365,89 @@ async def test_get_provider_pricing_history_resolves_inherited_model_billing(db_
     assert history[0].resolved_cache_billing_enabled is True
     assert history[0].resolved_cached_input_price == 0.05
     assert history[0].resolved_cached_output_price == 0.2
+
+
+@pytest.mark.asyncio
+async def test_update_provider_mapping_pause_and_resume(db_session):
+    from datetime import timedelta
+    from app.common.time import utc_now
+
+    model_repo = SQLAlchemyModelRepository(db_session)
+    provider_repo = SQLAlchemyProviderRepository(db_session)
+    service = ModelService(model_repo, provider_repo)
+
+    await model_repo.create_mapping(ModelMappingCreate(requested_model="gpt-4o-mini"))
+    provider = await provider_repo.create(
+        ProviderCreate(
+            name="p1",
+            base_url="https://example.com",
+            protocol="openai",
+            api_type="chat",
+        )
+    )
+    created = await service.create_provider_mapping(
+        ModelMappingProviderCreate(
+            requested_model="gpt-4o-mini",
+            provider_id=provider.id,
+            target_model_name="gpt-4o-mini",
+            input_price=0.0,
+            output_price=0.0,
+        )
+    )
+    assert created.paused_until is None
+
+    # Pause into the future.
+    paused_until = utc_now() + timedelta(hours=1)
+    updated = await service.update_provider_mapping(
+        created.id,
+        ModelMappingProviderUpdate(paused_until=paused_until),
+    )
+    assert updated.paused_until is not None
+    # Stored value round-trips to (approximately) the same instant.
+    assert abs((updated.paused_until - paused_until).total_seconds()) < 2
+
+    # Resume by explicitly clearing paused_until.
+    resumed = await service.update_provider_mapping(
+        created.id,
+        ModelMappingProviderUpdate(paused_until=None),
+    )
+    assert resumed.paused_until is None
+
+
+@pytest.mark.asyncio
+async def test_create_provider_mapping_persists_paused_until(db_session):
+    """A mapping created with paused_until must not silently drop it."""
+    from datetime import timedelta
+    from app.common.time import utc_now
+
+    model_repo = SQLAlchemyModelRepository(db_session)
+    provider_repo = SQLAlchemyProviderRepository(db_session)
+    service = ModelService(model_repo, provider_repo)
+
+    await model_repo.create_mapping(ModelMappingCreate(requested_model="gpt-4o-mini"))
+    provider = await provider_repo.create(
+        ProviderCreate(
+            name="p1",
+            base_url="https://example.com",
+            protocol="openai",
+            api_type="chat",
+        )
+    )
+
+    paused_until = utc_now() + timedelta(hours=1)
+    created = await service.create_provider_mapping(
+        ModelMappingProviderCreate(
+            requested_model="gpt-4o-mini",
+            provider_id=provider.id,
+            target_model_name="gpt-4o-mini",
+            input_price=0.0,
+            output_price=0.0,
+            paused_until=paused_until,
+        )
+    )
+    assert created.paused_until is not None
+    assert abs((created.paused_until - paused_until).total_seconds()) < 2
+
+    # And it round-trips on read.
+    mappings = await model_repo.get_provider_mappings(requested_model="gpt-4o-mini")
+    assert mappings[0].paused_until is not None

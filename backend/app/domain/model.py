@@ -214,6 +214,11 @@ class ModelMappingProviderCreate(ModelMappingProviderBase):
     weight: int = Field(1, ge=1, description="Weight")
     # Is Active
     is_active: bool = Field(True, description="Is Active")
+    # Temporary pause window end (UTC). Future value = temporarily paused
+    # (scheduled last); None/past = normally available.
+    paused_until: Optional[datetime] = Field(
+        None, description="Temporary pause window end (UTC)"
+    )
     # Provider override pricing (USD per 1,000,000 tokens)
     input_price: Optional[float] = Field(None, description="Input price override ($/1M tokens)")
     output_price: Optional[float] = Field(None, description="Output price override ($/1M tokens)")
@@ -261,6 +266,8 @@ class ModelMappingProviderUpdate(BaseModel):
     priority: Optional[int] = None
     weight: Optional[int] = Field(None, ge=1)
     is_active: Optional[bool] = None
+    # Temporary pause window end (UTC). Future = pause, explicit null = resume now.
+    paused_until: Optional[datetime] = None
     input_price: Optional[float] = None
     output_price: Optional[float] = None
     billing_mode: Optional[BillingMode] = None
@@ -334,6 +341,7 @@ class ModelMappingProvider(ModelMappingProviderBase):
     priority: int = 0
     weight: int = 1
     is_active: bool = True
+    paused_until: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

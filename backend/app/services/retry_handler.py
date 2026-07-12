@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Optional, Awaitable
 
 from app.config import get_settings
-from app.common.time import utc_now
+from app.common.time import ensure_utc, utc_now
 from app.providers.base import ProviderResponse
 from app.rules.models import CandidateProvider
 from app.services.provider_health import (
@@ -134,14 +134,29 @@ class RetryHandler:
         if not candidates:
             return
 
+        # Split off temporarily-paused candidates: they remain eligible but are
+        # scheduled after every non-paused candidate, so a paused provider is
+        # only tried once all active providers have failed. An expired
+        # paused_until is treated as active.
+        now = utc_now()
+        active_candidates: list[CandidateProvider] = []
+        paused_candidates: list[CandidateProvider] = []
+        for candidate in candidates:
+            paused_until = candidate.paused_until
+            if paused_until is not None and ensure_utc(paused_until) > now:
+                paused_candidates.append(candidate)
+            else:
+                active_candidates.append(candidate)
+
         groups: list[tuple[str, list[CandidateProvider]]] = []
         if self.health_tracker is None or not self.health_tracker.enabled:
-            groups.append((requested_model, candidates))
+            if active_candidates:
+                groups.append((requested_model, active_candidates))
         else:
-            snapshots = await self.health_tracker.get_snapshots(candidates)
+            snapshots = await self.health_tracker.get_snapshots(active_candidates)
             healthy: list[CandidateProvider] = []
             degraded_groups: dict[float, list[CandidateProvider]] = {}
-            for candidate in candidates:
+            for candidate in active_candidates:
                 snapshot = snapshots[provider_health_key(candidate)]
                 if not snapshot.degraded:
                     healthy.append(candidate)
@@ -155,6 +170,10 @@ class RetryHandler:
                 # their distribution does not disturb the healthy pool.
                 group_model_key = f"{requested_model}::degraded::{failure_rate:.6f}"
                 groups.append((group_model_key, degraded_groups[failure_rate]))
+
+        # Paused candidates come last, in their own isolated strategy group.
+        if paused_candidates:
+            groups.append((f"{requested_model}::paused", paused_candidates))
 
         for group_model_key, group_candidates in groups:
             async for candidate in self._iter_strategy_candidates(

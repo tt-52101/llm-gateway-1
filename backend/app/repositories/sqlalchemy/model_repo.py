@@ -101,6 +101,9 @@ class SQLAlchemyModelRepository(ModelRepository):
             priority=entity.priority,
             weight=entity.weight,
             is_active=entity.is_active,
+            paused_until=ensure_utc(entity.paused_until)
+            if entity.paused_until is not None
+            else None,
             created_at=ensure_utc(entity.created_at),
             updated_at=ensure_utc(entity.updated_at),
         )
@@ -285,6 +288,9 @@ class SQLAlchemyModelRepository(ModelRepository):
             priority=data.priority,
             weight=data.weight,
             is_active=data.is_active,
+            paused_until=to_utc_naive(data.paused_until)
+            if data.paused_until is not None
+            else None,
         )
         self.session.add(entity)
         await self.session.commit()
@@ -393,13 +399,17 @@ class SQLAlchemyModelRepository(ModelRepository):
         
         update_data = data.model_dump(exclude_unset=True)
         for key, value in update_data.items():
+            # paused_until is stored as a naive UTC datetime; normalize any
+            # tz-aware input so comparisons at schedule time stay consistent.
+            if key == "paused_until" and value is not None:
+                value = to_utc_naive(value)
             setattr(entity, key, value)
-        
+
         entity.updated_at = to_utc_naive(utc_now())
-        
+
         await self.session.commit()
         await self.session.refresh(entity)
-        
+
         provider_name = entity.provider.name if entity.provider else ""
         provider_protocol = entity.provider.protocol if entity.provider else None
         return self._provider_mapping_to_domain(entity, provider_name, provider_protocol)
@@ -428,6 +438,9 @@ class SQLAlchemyModelRepository(ModelRepository):
         now = to_utc_naive(utc_now())
         for entity in entities:
             for key, value in update_data.items():
+                # Keep paused_until as naive UTC, mirroring update_provider_mapping.
+                if key == "paused_until" and value is not None:
+                    value = to_utc_naive(value)
                 setattr(entity, key, value)
             entity.updated_at = now
 

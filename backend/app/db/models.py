@@ -238,6 +238,12 @@ class ModelMappingProvider(Base):
     weight: Mapped[int] = mapped_column(Integer, default=1)
     # Is Active
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Temporary pause window end (UTC, naive). When set to a future time, this
+    # mapping is still a candidate but scheduled last (after all non-paused
+    # mappings). NULL or a past value means normally available.
+    paused_until: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
     # Creation Time
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=utc_now_naive, nullable=False
@@ -246,7 +252,7 @@ class ModelMappingProvider(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False
     )
-    
+
     # Relationships
     provider: Mapped["ServiceProvider"] = relationship(
         "ServiceProvider", back_populates="model_mappings"
