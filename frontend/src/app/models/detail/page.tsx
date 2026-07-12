@@ -33,6 +33,7 @@ import {
   Loader2,
   Plus,
   Pencil,
+  PauseCircle,
   Trash2,
   TriangleAlert,
 } from 'lucide-react';
@@ -41,6 +42,7 @@ import {
   ModelProviderForm,
   ModelMatchDialog,
   ModelTestDialog,
+  ProviderAvailabilityDialog,
 } from '@/components/models';
 import { ConfirmDialog, LoadingSpinner, ErrorState } from '@/components/common';
 import { updateModelProvider as updateModelProviderApi } from '@/lib/api';
@@ -77,6 +79,19 @@ function formatRate(value: number | null | undefined) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+/** True when the mapping is temporarily paused with a still-future window. */
+function isMappingPaused(mapping: ModelMappingProvider): boolean {
+  if (!mapping.is_active || !mapping.paused_until) return false;
+  return new Date(mapping.paused_until).getTime() > Date.now();
+}
+
+/** Minutes remaining in the pause window (>= 1), or null if not paused. */
+function pauseRemainingMinutes(mapping: ModelMappingProvider): number | null {
+  if (!isMappingPaused(mapping)) return null;
+  const ms = new Date(mapping.paused_until as string).getTime() - Date.now();
+  return Math.max(1, Math.round(ms / 60000));
+}
+
 
 export default function ModelDetailPage() {
   return (
@@ -105,6 +120,9 @@ function ModelDetailContent() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingMapping, setDeletingMapping] = useState<ModelMappingProvider | null>(null);
   const [prioritizingMappingId, setPrioritizingMappingId] = useState<number | null>(null);
+  const [availabilityDialogOpen, setAvailabilityDialogOpen] = useState(false);
+  const [availabilityMapping, setAvailabilityMapping] =
+    useState<ModelMappingProvider | null>(null);
 
   const { data: model, isLoading, isError, refetch } = useModel(requestedModel, {
     refetchInterval: 30 * 1000,
@@ -130,6 +148,25 @@ function ModelDetailContent() {
   const handleEditMapping = (mapping: ModelMappingProvider) => {
     setEditingMapping(mapping);
     setFormOpen(true);
+  };
+
+  const handleOpenAvailability = (mapping: ModelMappingProvider) => {
+    setAvailabilityMapping(mapping);
+    setAvailabilityDialogOpen(true);
+  };
+
+  const handleAvailabilitySubmit = async (
+    data: ModelMappingProviderUpdate
+  ) => {
+    if (!availabilityMapping) return;
+    try {
+      await updateMutation.mutateAsync({ id: availabilityMapping.id, data });
+      setAvailabilityDialogOpen(false);
+      setAvailabilityMapping(null);
+      refetch();
+    } catch {
+      // Errors are surfaced via mutation onError toast
+    }
   };
 
   const handleDeleteMapping = (mapping: ModelMappingProvider) => {
@@ -412,7 +449,6 @@ function ModelDetailContent() {
                   {supportsBilling && <TableHead>{t('detail.billing')}</TableHead>}
                   <TableHead>{t('detail.priority')}</TableHead>
                   <TableHead>{t('detail.weight')}</TableHead>
-                  <TableHead>{t('detail.rules')}</TableHead>
                   <TableHead>{t('detail.status')}</TableHead>
                   <TableHead className="text-right">{t('detail.actions')}</TableHead>
                 </TableRow>
@@ -449,6 +485,23 @@ function ModelDetailContent() {
                         failureRate: healthFailureRate,
                       })
                     : undefined;
+                  const paused = isMappingPaused(mapping);
+                  const pausedMinutes = pauseRemainingMinutes(mapping);
+                  const pausedRemainingText =
+                    pausedMinutes === null
+                      ? ''
+                      : pausedMinutes < 60
+                        ? t('availability.remainingMinutes', { minutes: pausedMinutes })
+                        : (() => {
+                            const hours = Math.floor(pausedMinutes / 60);
+                            const mins = pausedMinutes % 60;
+                            return mins > 0
+                              ? t('availability.remainingHoursMinutes', {
+                                  hours,
+                                  minutes: mins,
+                                })
+                              : t('availability.remainingHours', { hours });
+                          })();
                   return (
                     <TableRow
                       key={mapping.id}
@@ -519,15 +572,6 @@ function ModelDetailContent() {
                       <TableCell>{mapping.priority}</TableCell>
                       <TableCell>{mapping.weight}</TableCell>
                       <TableCell>
-                        {mapping.provider_rules ? (
-                          <Badge variant="outline" className="text-blue-600">
-                            {t('detail.configured')}
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
                         {isProviderDisabledWhileMappingActive ? (
                           <TooltipProvider>
                             <Tooltip>
@@ -538,6 +582,29 @@ function ModelDetailContent() {
                               </TooltipTrigger>
                               <TooltipContent>
                                 {t('detail.providerDisabledTooltip')}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        ) : paused ? (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge
+                                  className="gap-1 border-transparent bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                                  tabIndex={0}
+                                >
+                                  <PauseCircle
+                                    className="h-3 w-3"
+                                    aria-hidden="true"
+                                    suppressHydrationWarning
+                                  />
+                                  {t('availability.pausedBadge', {
+                                    remaining: pausedRemainingText,
+                                  })}
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-72 text-xs leading-relaxed">
+                                {t('availability.pausedStatusTooltip')}
                               </TooltipContent>
                             </Tooltip>
                           </TooltipProvider>
@@ -577,6 +644,21 @@ function ModelDetailContent() {
                               </Tooltip>
                             </TooltipProvider>
                           ) : null}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleOpenAvailability(mapping)}
+                            title={t('availability.title')}
+                          >
+                            <PauseCircle
+                              className={
+                                mapping.is_active && isMappingPaused(mapping)
+                                  ? 'h-4 w-4 text-amber-600'
+                                  : 'h-4 w-4'
+                              }
+                              suppressHydrationWarning
+                            />
+                          </Button>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -683,6 +765,14 @@ function ModelDetailContent() {
         open={matchDialogOpen}
         onOpenChange={setMatchDialogOpen}
         requestedModel={requestedModel}
+      />
+
+      <ProviderAvailabilityDialog
+        open={availabilityDialogOpen}
+        onOpenChange={setAvailabilityDialogOpen}
+        mapping={availabilityMapping}
+        onSubmit={handleAvailabilitySubmit}
+        loading={updateMutation.isPending}
       />
 
       <ConfirmDialog

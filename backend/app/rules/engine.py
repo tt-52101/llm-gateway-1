@@ -96,6 +96,7 @@ class RuleEngine:
                         model_per_image_price=model_mapping.per_image_price,
                         model_tiered_pricing=model_mapping.tiered_pricing,
                         provider_mapping_id=pm.id,
+                        paused_until=pm.paused_until,
                     )
                 )
 
@@ -164,6 +165,7 @@ class RuleEngine:
                         model_per_image_price=model_mapping.per_image_price,
                         model_tiered_pricing=model_mapping.tiered_pricing,
                         provider_mapping_id=pm.id,
+                        paused_until=pm.paused_until,
                     )
                 )
 

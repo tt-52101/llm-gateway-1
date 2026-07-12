@@ -639,6 +639,28 @@
       "importFailed": "Import failed: {message}",
       "importFailedUnknown": "Import failed due to an unknown error",
       "exportFailed": "Export failed"
+    },
+    "availability": {
+      "title": "Availability",
+      "subtitle": "{provider} · {model}",
+      "available": "Available",
+      "availableDesc": "Scheduled normally by priority and weight.",
+      "paused": "Temporarily paused",
+      "pausedDesc": "Kept as a candidate but scheduled last — only used after all other providers fail. Auto-resumes when the window ends.",
+      "disabled": "Permanently disabled",
+      "disabledDesc": "Removed from scheduling until you re-enable it.",
+      "durationLabel": "Pause duration",
+      "durationMinutes": "{minutes} min",
+      "durationHours": "{hours}h",
+      "customDuration": "Custom",
+      "customPlaceholder": "Minutes",
+      "minutesUnit": "minutes",
+      "overrideHint": "Saving will override the current pause window with the new duration.",
+      "remainingMinutes": "{minutes}m left",
+      "remainingHours": "{hours}h left",
+      "remainingHoursMinutes": "{hours}h {minutes}m left",
+      "pausedBadge": "Paused · {remaining}",
+      "pausedStatusTooltip": "Temporarily paused: other providers are scheduled first, and this one is only tried if they all fail. It resumes automatically when the window ends."
     }
   },
   "logs": {

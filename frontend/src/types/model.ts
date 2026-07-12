@@ -100,6 +100,8 @@ export interface ModelMappingProvider {
   priority: number;
   weight: number;
   is_active: boolean;
+  /** Temporary pause window end (UTC ISO). Future value = temporarily paused (scheduled last). */
+  paused_until?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -207,6 +209,8 @@ export interface ModelMappingProviderUpdate {
   priority?: number;
   weight?: number;
   is_active?: boolean;
+  /** Temporary pause window end (UTC ISO). Future = pause, explicit null = resume now. */
+  paused_until?: string | null;
 }
 
 /** Bulk upgrade provider mappings by provider + current target model name */
