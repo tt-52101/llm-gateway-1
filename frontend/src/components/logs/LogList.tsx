@@ -354,7 +354,8 @@ export function LogList({ logs, onView }: LogListProps) {
         }}
         title={t('list.cancelConfirmTitle')}
         description={t('list.cancelConfirmDescription')}
-        confirmText={t('list.cancelRequest')}
+        confirmText={t('list.cancelConfirmAction')}
+        cancelText={t('list.cancelConfirmDismiss')}
         onConfirm={handleConfirmCancel}
         destructive
         loading={cancelMutation.isPending}

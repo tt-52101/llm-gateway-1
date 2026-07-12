@@ -721,6 +721,8 @@
       "cancelRequest": "Cancel",
       "cancelConfirmTitle": "Cancel request?",
       "cancelConfirmDescription": "This stops the active request and cannot be undone.",
+      "cancelConfirmAction": "OK",
+      "cancelConfirmDismiss": "Cancel",
       "processing": "Processing",
       "ttfb": "TTFB",
       "totalDuration": "Total"
@@ -809,6 +811,7 @@
         "toolsCount": "{count} tool(s)",
         "toolCall": "Tool Call",
         "toolResult": "Tool Result",
+        "charCount": "{count} characters",
         "arguments": "Arguments",
         "schema": "Schema",
         "showSchema": "Show schema",

@@ -602,11 +602,35 @@ class SQLAlchemyLogRepository(LogRepository):
         total = total_result.scalar() or 0
 
         # Sorting
+        # Always surface in-progress requests (is_completed == False) before
+        # completed ones so long-running requests are not buried on later pages
+        # under a large volume, regardless of the user-selected sort. Booleans
+        # order False < True, so is_completed ASC places in-progress rows first.
+        #
+        # Within the in-progress group we force oldest-first (request_time ASC)
+        # so the longest-running requests stay at the very top of page 1 and can
+        # be found and cancelled even when in-progress rows span multiple pages.
+        # The user's chosen sort only governs the completed group.
         sort_column = getattr(RequestLogORM, query.sort_by, RequestLogORM.request_time)
+        # NULL for in-progress rows keeps them ahead of (and unaffected by) the
+        # user's sort; completed rows fall back to their request_time.
+        in_progress_order = case(
+            (RequestLogORM.is_completed.is_(False), RequestLogORM.request_time)
+        )
         if query.sort_order == "asc":
-            stmt = stmt.order_by(sort_column.asc(), RequestLogORM.id.asc())
+            stmt = stmt.order_by(
+                RequestLogORM.is_completed.asc(),
+                in_progress_order.asc().nulls_last(),
+                sort_column.asc(),
+                RequestLogORM.id.asc(),
+            )
         else:
-            stmt = stmt.order_by(sort_column.desc(), RequestLogORM.id.desc())
+            stmt = stmt.order_by(
+                RequestLogORM.is_completed.asc(),
+                in_progress_order.asc().nulls_last(),
+                sort_column.desc(),
+                RequestLogORM.id.desc(),
+            )
 
         # Pagination
         stmt = stmt.offset((query.page - 1) * query.page_size).limit(query.page_size)

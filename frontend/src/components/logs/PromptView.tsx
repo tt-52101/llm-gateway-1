@@ -74,6 +74,27 @@ function isObject(value: unknown): value is AnyRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Approximate character length of a single message part. */
+function partCharCount(part: PromptPart): number {
+  switch (part.kind) {
+    case "text":
+      return part.text.length;
+    case "image":
+      return part.url.length;
+    case "tool_call":
+      return part.name.length + part.argsText.length;
+    case "tool_result":
+      return part.text.length;
+    default:
+      return 0;
+  }
+}
+
+/** Total character length across all parts of a message. */
+function messageCharCount(message: PromptMessage): number {
+  return message.parts.reduce((sum, part) => sum + partCharCount(part), 0);
+}
+
 /** Lightweight guard: true only when body looks like a chat request. */
 export function hasPromptContent(
   body: unknown,
@@ -392,9 +413,19 @@ function ParametersSection({ params }: { params: PromptParam[] }) {
 
 function ToolCallBlock({ part }: { part: Extract<PromptPart, { kind: "tool_call" }> }) {
   const t = useTranslations("logs");
+  const [expanded, setExpanded] = useState(false);
   return (
     <div className="rounded-md border border-dashed bg-background p-2">
-      <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full flex-wrap items-center gap-2 text-left"
+      >
+        {expanded ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" suppressHydrationWarning />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" suppressHydrationWarning />
+        )}
         <Badge variant="outline" className="gap-1 font-mono">
           <Wrench className="h-3 w-3" suppressHydrationWarning />
           {t("detail.prompt.toolCall")}
@@ -403,10 +434,17 @@ function ToolCallBlock({ part }: { part: Extract<PromptPart, { kind: "tool_call"
         {part.id && (
           <span className="font-mono text-[10px] text-muted-foreground">{part.id}</span>
         )}
-      </div>
-      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 font-mono text-xs">
-        {part.argsText}
-      </pre>
+        {!expanded && (
+          <span className="text-[10px] text-muted-foreground">
+            {t("detail.prompt.charCount", { count: part.argsText.length })}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 font-mono text-xs">
+          {part.argsText}
+        </pre>
+      )}
     </div>
   );
 }
@@ -417,13 +455,23 @@ function ToolResultBlock({
   part: Extract<PromptPart, { kind: "tool_result" }>;
 }) {
   const t = useTranslations("logs");
+  const [expanded, setExpanded] = useState(false);
   return (
     <div
       className={`rounded-md border bg-background p-2 ${
         part.isError ? "border-red-300 dark:border-red-900" : ""
       }`}
     >
-      <div className="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full flex-wrap items-center gap-2 text-left"
+      >
+        {expanded ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" suppressHydrationWarning />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" suppressHydrationWarning />
+        )}
         <Badge variant={part.isError ? "error" : "outline"} className="font-mono">
           {t("detail.prompt.toolResult")}
         </Badge>
@@ -432,8 +480,13 @@ function ToolResultBlock({
             {part.toolCallId}
           </span>
         )}
-      </div>
-      {part.text && (
+        {!expanded && part.text && (
+          <span className="text-[10px] text-muted-foreground">
+            {t("detail.prompt.charCount", { count: part.text.length })}
+          </span>
+        )}
+      </button>
+      {expanded && part.text && (
         <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded bg-muted/40 p-2 font-mono text-xs">
           {part.text}
         </pre>
@@ -463,25 +516,48 @@ function MessagePart({ part }: { part: PromptPart }) {
   }
 }
 
-function MessageCard({ message }: { message: PromptMessage }) {
+function MessageCard({
+  message,
+  defaultExpanded = false,
+}: {
+  message: PromptMessage;
+  defaultExpanded?: boolean;
+}) {
   const t = useTranslations("logs");
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const meta = ROLE_META[message.role];
   const Icon = meta.icon;
+  const charCount = messageCharCount(message);
   return (
     <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
-      <div className="flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 text-left"
+      >
+        {expanded ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" suppressHydrationWarning />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" suppressHydrationWarning />
+        )}
         <Icon className="h-4 w-4 text-muted-foreground" suppressHydrationWarning />
         <Badge variant={meta.variant}>{t(`detail.prompt.role.${message.role}`)}</Badge>
-      </div>
-      {message.parts.length > 0 ? (
-        <div className="space-y-2">
-          {message.parts.map((part, index) => (
-            <MessagePart key={index} part={part} />
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs italic text-muted-foreground">—</p>
-      )}
+        {!expanded && (
+          <span className="text-[10px] text-muted-foreground">
+            {t("detail.prompt.charCount", { count: charCount })}
+          </span>
+        )}
+      </button>
+      {expanded &&
+        (message.parts.length > 0 ? (
+          <div className="space-y-2">
+            {message.parts.map((part, index) => (
+              <MessagePart key={index} part={part} />
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs italic text-muted-foreground">—</p>
+        ))}
     </div>
   );
 }
@@ -575,6 +651,17 @@ export function PromptView({ body, protocol }: PromptViewProps) {
   const t = useTranslations("logs");
   const model = useMemo(() => parsePromptRequest(body, protocol), [body, protocol]);
 
+  // Index where the last conversation turn begins: the last user message plus
+  // any assistant/tool messages that follow it. Everything before stays
+  // collapsed by default so large histories don't overwhelm the page.
+  const lastTurnStart = useMemo(() => {
+    if (!model || model.messages.length === 0) return 0;
+    for (let i = model.messages.length - 1; i >= 0; i -= 1) {
+      if (model.messages[i].role === "user") return i;
+    }
+    return 0;
+  }, [model]);
+
   if (!model) {
     return (
       <div className="flex items-center gap-2 rounded-lg border bg-muted/30 p-4 text-sm text-muted-foreground">
@@ -594,7 +681,11 @@ export function PromptView({ body, protocol }: PromptViewProps) {
         <SectionLabel icon={Bot}>{t("detail.prompt.messages")}</SectionLabel>
         <div className="space-y-3">
           {model.messages.map((message, index) => (
-            <MessageCard key={index} message={message} />
+            <MessageCard
+              key={index}
+              message={message}
+              defaultExpanded={index >= lastTurnStart}
+            />
           ))}
         </div>
       </div>
