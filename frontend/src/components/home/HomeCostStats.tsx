@@ -15,20 +15,69 @@ import { Input } from '@/components/ui/input';
 import { useTranslations } from 'next-intl';
 import { useApiKeys } from '@/lib/hooks';
 
-type RangePreset = '24h' | '7d' | '30d' | '90d' | '365d' | 'custom';
+type RangePreset =
+  | '1h'
+  | '6h'
+  | '12h'
+  | '24h'
+  | '7d'
+  | '30d'
+  | '90d'
+  | '365d'
+  | 'custom';
 
 const STORAGE_KEY = 'home_cost_stats_range_v1';
 const DEFAULT_PRESET: RangePreset = '24h';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 const MAX_TREND_BARS = 30;
+
+// Hours covered by each non-custom preset.
+const PRESET_HOURS: Record<Exclude<RangePreset, 'custom'>, number> = {
+  '1h': 1,
+  '6h': 6,
+  '12h': 12,
+  '24h': 24,
+  '7d': 7 * 24,
+  '30d': 30 * 24,
+  '90d': 90 * 24,
+  '365d': 365 * 24,
+};
 
 function resolveBucket(rangeMs: number, maxBars: number) {
   const perBarMs = rangeMs / Math.max(1, maxBars);
   return perBarMs < DAY_MS ? 'hour' : 'day';
 }
 
+type RangePlan = {
+  rangeMs: number;
+  bucket: 'minute' | 'hour' | 'day';
+  bucketMinutes?: number;
+};
+
+// Resolve a non-custom preset to its range span and trend bucket granularity.
+// Sub-day ranges use minute buckets sized to fill ~MAX_TREND_BARS bars.
+// `custom` falls back to the widest range (used only when custom dates are invalid).
+function resolvePresetPlan(preset: RangePreset): RangePlan {
+  if (preset === 'custom') {
+    const rangeMs = PRESET_HOURS['365d'] * HOUR_MS;
+    return { rangeMs, bucket: resolveBucket(rangeMs, MAX_TREND_BARS) };
+  }
+  const rangeMs = PRESET_HOURS[preset] * HOUR_MS;
+  if (preset === '1h') return { rangeMs, bucket: 'minute', bucketMinutes: 2 };
+  if (preset === '6h') return { rangeMs, bucket: 'minute', bucketMinutes: 15 };
+  if (preset === '12h') return { rangeMs, bucket: 'minute', bucketMinutes: 30 };
+  return { rangeMs, bucket: resolveBucket(rangeMs, MAX_TREND_BARS) };
+}
+
 function getRangeLabel(preset: RangePreset, t: (key: string) => string) {
   switch (preset) {
+    case '1h':
+      return t('rangePast1Hour');
+    case '6h':
+      return t('rangePast6Hours');
+    case '12h':
+      return t('rangePast12Hours');
     case '24h':
       return t('rangePast24Hours');
     case '7d':
@@ -171,17 +220,17 @@ export function HomeCostStats() {
         start_time: customRange.startAt.toISOString(),
         end_time: customRange.endAt.toISOString(),
         bucket,
+        bucket_minutes: undefined as number | undefined,
       } as const;
     }
 
-    const days =
-      preset === '24h' ? 1 : preset === '7d' ? 7 : preset === '30d' ? 30 : preset === '90d' ? 90 : 365;
-    const start = new Date(now.getTime() - days * DAY_MS);
-    const bucket = resolveBucket(now.getTime() - start.getTime(), MAX_TREND_BARS);
+    const plan = resolvePresetPlan(preset);
+    const start = new Date(now.getTime() - plan.rangeMs);
     return {
       start_time: start.toISOString(),
       end_time: now.toISOString(),
-      bucket,
+      bucket: plan.bucket,
+      bucket_minutes: plan.bucketMinutes,
     } as const;
   }, [preset, customRange]);
 
@@ -193,11 +242,7 @@ export function HomeCostStats() {
       return diffDaysInclusive(start, end);
     }
 
-    if (preset === '24h') return 1;
-    if (preset === '7d') return 7;
-    if (preset === '30d') return 30;
-    if (preset === '90d') return 90;
-    return 365;
+    return PRESET_HOURS[preset] / 24;
   }, [preset, customStart, customEnd]);
 
   const rangeLabel = useMemo(() => {
@@ -235,16 +280,15 @@ export function HomeCostStats() {
         return getLogCostStats(params);
       }
 
-      const days =
-        preset === '24h' ? 1 : preset === '7d' ? 7 : preset === '30d' ? 30 : preset === '90d' ? 90 : 365;
-      const start = new Date(now.getTime() - days * DAY_MS);
-      const bucket = resolveBucket(now.getTime() - start.getTime(), MAX_TREND_BARS);
+      const plan = resolvePresetPlan(preset);
+      const start = new Date(now.getTime() - plan.rangeMs);
 
       // For live ranges, omit `end_time` so the server includes the latest logs up to now.
       const params: LogQueryParams = {
         start_time: start.toISOString(),
         tz_offset_minutes: tzOffsetMinutes,
-        bucket,
+        bucket: plan.bucket,
+        bucket_minutes: plan.bucketMinutes,
         group_by: statsMode,
         api_key_id: apiKeyId,
       };
@@ -267,6 +311,7 @@ export function HomeCostStats() {
       rangeStart={displayRange.start_time}
       rangeEnd={displayRange.end_time}
       bucket={displayRange.bucket}
+      bucketMinutes={displayRange.bucket_minutes}
       maxBars={MAX_TREND_BARS}
       modelStatsControls={
         <div className="flex items-center gap-2">
@@ -310,6 +355,9 @@ export function HomeCostStats() {
               <SelectValue placeholder={t('selectTimeRange')} />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="1h">{t('last1Hour')}</SelectItem>
+              <SelectItem value="6h">{t('last6Hours')}</SelectItem>
+              <SelectItem value="12h">{t('last12Hours')}</SelectItem>
               <SelectItem value="24h">{t('last24Hours')}</SelectItem>
               <SelectItem value="7d">{t('last7Days')}</SelectItem>
               <SelectItem value="30d">{t('last30Days')}</SelectItem>

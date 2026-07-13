@@ -39,7 +39,8 @@ interface CostStatsProps {
   rangeDays?: number;
   rangeStart?: string;
   rangeEnd?: string;
-  bucket?: "hour" | "day";
+  bucket?: BucketUnit;
+  bucketMinutes?: number;
   maxBars?: number;
   withoutCard?: boolean;
   hideTitle?: boolean;
@@ -52,8 +53,17 @@ type Segment = {
   formatValue: (v: number) => string;
 };
 
+type BucketUnit = "minute" | "hour" | "day";
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+
+function bucketUnitMs(unit: BucketUnit, bucketMinutes?: number) {
+  if (unit === "day") return DAY_MS;
+  if (unit === "hour") return HOUR_MS;
+  return Math.max(1, bucketMinutes ?? 1) * MINUTE_MS;
+}
 
 function parseBucketToLocalDate(bucket: string) {
   const trimmed = bucket.trim();
@@ -75,6 +85,17 @@ function parseBucketToLocalDate(bucket: string) {
     return new Date(year, month - 1, day, hour, 0, 0, 0);
   }
 
+  const matchMinute = /^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(trimmed);
+  if (matchMinute) {
+    const year = Number(matchMinute[1]);
+    const month = Number(matchMinute[2]);
+    const day = Number(matchMinute[3]);
+    const hour = Number(matchMinute[4]);
+    const minute = Number(matchMinute[5]);
+    const second = Number(matchMinute[6] ?? 0);
+    return new Date(year, month - 1, day, hour, minute, second, 0);
+  }
+
   const matchDay = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
   if (matchDay) {
     const year = Number(matchDay[1]);
@@ -86,44 +107,46 @@ function parseBucketToLocalDate(bucket: string) {
   return null;
 }
 
-function formatBucketLabel(date: Date, unit: "hour" | "day") {
+function formatBucketLabel(date: Date, unit: BucketUnit) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   if (unit === "day") return `${y}-${m}-${d}`;
   const hh = String(date.getHours()).padStart(2, "0");
-  return `${y}-${m}-${d} ${hh}:00`;
+  if (unit === "hour") return `${y}-${m}-${d} ${hh}:00`;
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${y}-${m}-${d} ${hh}:${mm}`;
 }
 
 function formatBucketRangeLabel(
   start: Date,
   end: Date,
-  unit: "hour" | "day",
+  unit: BucketUnit,
   step: number,
 ) {
-  if (unit === "day" && step === 1) return formatBucketLabel(start, "day");
-  if (unit === "hour" && step === 1) return formatBucketLabel(start, "hour");
+  if (step === 1) return formatBucketLabel(start, unit);
   const endInclusive = new Date(end.getTime() - 1);
   return `${formatBucketLabel(start, unit)} ~ ${formatBucketLabel(endInclusive, unit)}`;
 }
 
-function floorToUnit(date: Date, unit: "hour" | "day") {
+function floorToUnit(date: Date, unit: BucketUnit) {
   const d = new Date(date);
   if (unit === "day") d.setHours(0, 0, 0, 0);
-  else d.setMinutes(0, 0, 0);
+  else if (unit === "hour") d.setMinutes(0, 0, 0);
+  else d.setSeconds(0, 0);
   return d;
 }
 
-function ceilToUnitExclusive(date: Date, unit: "hour" | "day") {
+function ceilToUnitExclusive(date: Date, unit: BucketUnit) {
   const floored = floorToUnit(date, unit);
   if (floored.getTime() === date.getTime()) return floored;
   const bumped = new Date(floored);
-  bumped.setTime(bumped.getTime() + (unit === "day" ? DAY_MS : HOUR_MS));
+  bumped.setTime(bumped.getTime() + bucketUnitMs(unit));
   return bumped;
 }
 
-function computeStep(rangeMs: number, unit: "hour" | "day", maxBars: number) {
-  const unitMs = unit === "day" ? DAY_MS : HOUR_MS;
+function computeStep(rangeMs: number, unit: BucketUnit, maxBars: number, bucketMinutes?: number) {
+  const unitMs = bucketUnitMs(unit, bucketMinutes);
   const raw = rangeMs / Math.max(1, maxBars) / unitMs;
   return Math.max(1, Math.ceil(raw));
 }
@@ -172,7 +195,7 @@ function TrendBars({
   segments: Segment[];
   maxTotal: number;
   height: number;
-  bucketUnit: "hour" | "day";
+  bucketUnit: BucketUnit;
   noDataLabel: string;
   showDetailsLabel: (title: string, bucket: string) => string;
 }) {
@@ -303,7 +326,7 @@ function TrendCard({
   totalLabel: string;
   totalValue: string;
   totalTooltip?: string;
-  bucketUnit: "hour" | "day";
+  bucketUnit: BucketUnit;
   noDataLabel: string;
   showDetailsLabel: (title: string, bucket: string) => string;
   maximizeLabel: (title: string) => string;
@@ -430,6 +453,7 @@ export function CostStats({
   rangeStart,
   rangeEnd,
   bucket = "day",
+  bucketMinutes,
   maxBars = 30,
   modelStatsControls,
   withoutCard = false,
@@ -462,8 +486,8 @@ export function CostStats({
     );
     if (alignedRangeMs <= 0) return stats.trend;
 
-    const step = computeStep(alignedRangeMs, bucket, maxBars);
-    const unitMs = bucket === "day" ? DAY_MS : HOUR_MS;
+    const step = computeStep(alignedRangeMs, bucket, maxBars, bucketMinutes);
+    const unitMs = bucketUnitMs(bucket, bucketMinutes);
     const bucketMs = step * unitMs;
     const bars = Math.max(1, Math.ceil(alignedRangeMs / bucketMs));
 
@@ -512,7 +536,7 @@ export function CostStats({
     }
 
     return emptyPoints;
-  }, [stats, rangeStart, rangeEnd, bucket, maxBars]);
+  }, [stats, rangeStart, rangeEnd, bucket, bucketMinutes, maxBars]);
 
   const avgTrendLabel = useMemo(() => {
     if (!rangeStart || !rangeEnd) {
@@ -528,17 +552,23 @@ export function CostStats({
       0,
       alignedEnd.getTime() - alignedStart.getTime(),
     );
-    const step = computeStep(alignedRangeMs, bucket, maxBars);
-    const unitLabel =
-      bucket === "day"
-        ? step === 1
-          ? t("costStats.day")
-          : t("costStats.dayShort", { count: step })
-        : step === 1
-          ? t("costStats.hour")
-          : t("costStats.hourShort", { count: step });
+    const step = computeStep(alignedRangeMs, bucket, maxBars, bucketMinutes);
+    let unitLabel: string;
+    if (bucket === "day") {
+      unitLabel =
+        step === 1 ? t("costStats.day") : t("costStats.dayShort", { count: step });
+    } else if (bucket === "hour") {
+      unitLabel =
+        step === 1 ? t("costStats.hour") : t("costStats.hourShort", { count: step });
+    } else {
+      const minutes = step * Math.max(1, bucketMinutes ?? 1);
+      unitLabel =
+        minutes === 1
+          ? t("costStats.minute")
+          : t("costStats.minuteShort", { count: minutes });
+    }
     return t("costStats.avgLabel", { unit: unitLabel });
-  }, [bucket, maxBars, rangeEnd, rangeStart, t]);
+  }, [bucket, bucketMinutes, maxBars, rangeEnd, rangeStart, t]);
 
   const spendSegments = useMemo<Segment[]>(
     () => [
