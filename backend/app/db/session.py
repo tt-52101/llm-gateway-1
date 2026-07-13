@@ -196,6 +196,14 @@ def _run_migrations(sync_conn) -> None:
                 "ON request_logs (trace_id, id)"
             )
         )
+        # Backs the log list ORDER BY, which leads with is_completed so
+        # in-progress requests stay on page 1, then falls back to request_time.
+        sync_conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_request_logs_completed_time "
+                "ON request_logs (is_completed, request_time)"
+            )
+        )
         sync_conn.execute(
             text(
                 "UPDATE request_logs "
