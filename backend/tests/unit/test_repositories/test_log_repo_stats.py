@@ -118,6 +118,19 @@ async def test_get_cost_stats_call_health_and_stream_ttfb(db_session):
     await repo.create(RequestLogCreate(
         request_time=now,
         requested_model="chat",
+        target_model="model-b",
+        provider_name="provider-b",
+        response_status=502,
+        first_byte_delay_ms=800,
+        is_stream=True,
+        is_completed=True,
+        trace_id="failed-with-retry",
+    ))
+    # Retry-attempt rows share the trace. They must not be counted as separate
+    # client calls in the summary, but each is a real upstream model call.
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
         target_model="model-a",
         provider_name="provider-a",
         response_status=500,
@@ -125,9 +138,10 @@ async def test_get_cost_stats_call_health_and_stream_ttfb(db_session):
         is_stream=True,
         is_completed=True,
         trace_id="failed-with-retry",
+        retry_count=1,
     ))
-    # A retry-attempt row shares the trace and must not be counted as a separate
-    # client call.
+    # The final failed attempt is also present in the root row. Per-model stats
+    # must count this attempt row once and exclude the duplicate root failure.
     await repo.create(RequestLogCreate(
         request_time=now,
         requested_model="chat",
@@ -138,7 +152,7 @@ async def test_get_cost_stats_call_health_and_stream_ttfb(db_session):
         is_stream=True,
         is_completed=True,
         trace_id="failed-with-retry",
-        retry_count=1,
+        retry_count=2,
     ))
     await repo.create(RequestLogCreate(
         request_time=now,
@@ -171,7 +185,7 @@ async def test_get_cost_stats_call_health_and_stream_ttfb(db_session):
     assert stats.summary.failure_count == 2
     assert stats.summary.success_rate == 0.5
 
-    assert len(stats.model_call_stats) == 2
+    assert len(stats.model_call_stats) == 3
     provider_a = next(
         item for item in stats.model_call_stats
         if item.provider_name == "provider-a"
@@ -184,6 +198,18 @@ async def test_get_cost_stats_call_health_and_stream_ttfb(db_session):
     assert provider_a.avg_first_byte_time_ms == 200
     assert provider_a.max_first_byte_time_ms == 300
 
+    provider_b = next(
+        item for item in stats.model_call_stats
+        if item.provider_name == "provider-b"
+    )
+    assert provider_b.model_name == "model-b"
+    assert provider_b.request_count == 1
+    assert provider_b.success_count == 0
+    assert provider_b.failure_count == 1
+    assert provider_b.success_rate == 0
+    assert provider_b.avg_first_byte_time_ms == 800
+    assert provider_b.max_first_byte_time_ms == 800
+
     provider_c = next(
         item for item in stats.model_call_stats
         if item.provider_name == "provider-c"
@@ -192,3 +218,55 @@ async def test_get_cost_stats_call_health_and_stream_ttfb(db_session):
     assert provider_c.failure_count == 1
     assert provider_c.avg_first_byte_time_ms is None
     assert provider_c.max_first_byte_time_ms is None
+
+
+@pytest.mark.asyncio
+async def test_model_call_stats_keep_failed_attempt_before_successful_fallback(db_session):
+    repo = SQLAlchemyLogRepository(db_session)
+    now = datetime.now(timezone.utc)
+
+    # The root row contains the final successful fallback result.
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
+        target_model="model-b",
+        provider_name="provider-b",
+        response_status=200,
+        first_byte_delay_ms=120,
+        is_stream=True,
+        is_completed=True,
+        trace_id="fallback-success",
+    ))
+    # The failed provider attempt is written as another row under the same trace.
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
+        target_model="model-a",
+        provider_name="provider-a",
+        response_status=500,
+        first_byte_delay_ms=450,
+        is_stream=True,
+        is_completed=True,
+        trace_id="fallback-success",
+        retry_count=1,
+    ))
+
+    stats = await repo.get_cost_stats(LogCostStatsQuery(
+        start_time=datetime(2000, 1, 1, tzinfo=timezone.utc),
+    ))
+
+    # One client request ultimately succeeded.
+    assert stats.summary.request_count == 1
+    assert stats.summary.success_count == 1
+    assert stats.summary.failure_count == 0
+
+    by_provider = {
+        item.provider_name: item
+        for item in stats.model_call_stats
+    }
+    assert by_provider["provider-a"].success_count == 0
+    assert by_provider["provider-a"].failure_count == 1
+    assert by_provider["provider-a"].success_rate == 0
+    assert by_provider["provider-b"].success_count == 1
+    assert by_provider["provider-b"].failure_count == 0
+    assert by_provider["provider-b"].success_rate == 1

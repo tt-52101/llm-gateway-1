@@ -493,7 +493,6 @@ class SQLAlchemyLogRepository(LogRepository):
             .correlate(RequestLogORM)
             .exists(),
         )
-
         # Build base query with only summary columns. Pagination is deliberately
         # applied to roots before retry attempt rows are loaded.
         stmt = select(*_SUMMARY_COLUMNS)
@@ -725,33 +724,51 @@ class SQLAlchemyLogRepository(LogRepository):
             .correlate(RequestLogORM)
             .exists(),
         )
-        conditions = [RequestLogORM.is_completed.is_(True), is_trace_root]
+        later_log = aliased(RequestLogORM)
+        has_later_trace_row = and_(
+            RequestLogORM.trace_id.isnot(None),
+            RequestLogORM.trace_id != "",
+            select(later_log.id)
+            .where(
+                later_log.trace_id == RequestLogORM.trace_id,
+                later_log.id > RequestLogORM.id,
+            )
+            .correlate(RequestLogORM)
+            .exists(),
+        )
+        base_conditions = [RequestLogORM.is_completed.is_(True)]
         tz_offset_minutes = int(query.tz_offset_minutes or 0)
 
         if query.start_time:
-            conditions.append(
+            base_conditions.append(
                 RequestLogORM.request_time >= to_utc_naive(query.start_time)
             )
         if query.end_time:
-            conditions.append(
+            base_conditions.append(
                 RequestLogORM.request_time <= to_utc_naive(query.end_time)
             )
         if query.provider_id:
-            conditions.append(RequestLogORM.provider_id == query.provider_id)
+            base_conditions.append(RequestLogORM.provider_id == query.provider_id)
         if query.api_key_id:
-            conditions.append(RequestLogORM.api_key_id == query.api_key_id)
+            base_conditions.append(RequestLogORM.api_key_id == query.api_key_id)
         if query.api_key_name:
-            conditions.append(
+            base_conditions.append(
                 RequestLogORM.api_key_name.ilike(f"%{query.api_key_name}%")
             )
         if query.user_id:
-            conditions.append(RequestLogORM.user_id.ilike(f"%{query.user_id}%"))
+            base_conditions.append(RequestLogORM.user_id.ilike(f"%{query.user_id}%"))
         if query.requested_model:
-            conditions.append(
+            base_conditions.append(
                 RequestLogORM.requested_model.ilike(f"%{query.requested_model}%")
             )
 
-        where_clause = and_(*conditions) if conditions else None
+        # Summary, trends, costs, and token usage describe client requests and
+        # therefore use one root row per trace.
+        root_where_clause = and_(*base_conditions, is_trace_root)
+        # Per-provider/model health describes actual upstream attempts. It must
+        # include failed retry rows; otherwise a later successful fallback hides
+        # the original model's 4xx/5xx failures.
+        attempt_where_clause = and_(*base_conditions)
 
         sum_total = func.coalesce(func.sum(RequestLogORM.total_cost), 0)
         sum_input = func.coalesce(func.sum(RequestLogORM.input_cost), 0)
@@ -769,6 +786,15 @@ class SQLAlchemyLogRepository(LogRepository):
         sum_failure = func.coalesce(
             func.sum(case((success_condition, 0), else_=1)), 0
         )
+        is_upstream_attempt = or_(
+            # Failed retry rows represent each actual unsuccessful upstream call.
+            ~is_trace_root,
+            # Successful attempts are stored only on the root row.
+            success_condition,
+            # Keep standalone failures that have no retry-attempt detail rows,
+            # such as model resolution or forwarding setup failures.
+            ~has_later_trace_row,
+        )
 
         summary_stmt = select(
             func.count().label("request_count"),
@@ -780,8 +806,7 @@ class SQLAlchemyLogRepository(LogRepository):
             sum_in_tokens.label("input_tokens"),
             sum_out_tokens.label("output_tokens"),
         )
-        if where_clause is not None:
-            summary_stmt = summary_stmt.where(where_clause)
+        summary_stmt = summary_stmt.where(root_where_clause)
 
         summary_row = (await self.session.execute(summary_stmt)).mappings().one()
         request_count = int(summary_row["request_count"] or 0)
@@ -886,8 +911,7 @@ class SQLAlchemyLogRepository(LogRepository):
             .group_by(bucket_start_utc_expr)
             .order_by(bucket_start_utc_expr)
         )
-        if where_clause is not None:
-            trend_stmt = trend_stmt.where(where_clause)
+        trend_stmt = trend_stmt.where(root_where_clause)
         trend_rows = (await self.session.execute(trend_stmt)).mappings().all()
         trend = [
             LogCostTrendPoint(
@@ -927,8 +951,7 @@ class SQLAlchemyLogRepository(LogRepository):
             .order_by(sum_total.desc())
             .limit(50)
         )
-        if where_clause is not None:
-            by_model_stmt = by_model_stmt.where(where_clause)
+        by_model_stmt = by_model_stmt.where(root_where_clause)
         model_rows = (await self.session.execute(by_model_stmt)).mappings().all()
         by_model = [
             LogCostByModel(
@@ -954,8 +977,7 @@ class SQLAlchemyLogRepository(LogRepository):
             .order_by((sum_in_tokens + sum_out_tokens).desc())
             .limit(50)
         )
-        if where_clause is not None:
-            by_model_tokens_stmt = by_model_tokens_stmt.where(where_clause)
+        by_model_tokens_stmt = by_model_tokens_stmt.where(root_where_clause)
         model_tokens_rows = (
             (await self.session.execute(by_model_tokens_stmt)).mappings().all()
         )
@@ -998,8 +1020,10 @@ class SQLAlchemyLogRepository(LogRepository):
             .group_by(provider_name_expr, model_name_expr)
             .order_by(func.count().desc(), provider_name_expr, model_name_expr)
         )
-        if where_clause is not None:
-            model_call_stmt = model_call_stmt.where(where_clause)
+        model_call_stmt = model_call_stmt.where(
+            attempt_where_clause,
+            is_upstream_attempt,
+        )
         model_call_rows = (
             (await self.session.execute(model_call_stmt)).mappings().all()
         )

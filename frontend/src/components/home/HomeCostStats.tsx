@@ -314,7 +314,7 @@ export function HomeCostStats() {
       bucket={displayRange.bucket}
       bucketMinutes={displayRange.bucket_minutes}
       maxBars={MAX_TREND_BARS}
-      beforeCharts={data ? <HomeCallStats stats={data} /> : null}
+      afterContent={data ? <HomeCallStats stats={data} /> : null}
       modelStatsControls={
         <div className="flex items-center gap-2">
            <Select

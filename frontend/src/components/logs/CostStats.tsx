@@ -34,7 +34,7 @@ interface CostStatsProps {
   refreshing?: boolean;
   headerActions?: React.ReactNode;
   headerExtras?: React.ReactNode;
-  beforeCharts?: React.ReactNode;
+  afterContent?: React.ReactNode;
   modelStatsControls?: React.ReactNode;
   rangeLabel?: string;
   rangeDays?: number;
@@ -449,7 +449,7 @@ export function CostStats({
   refreshing,
   headerActions,
   headerExtras,
-  beforeCharts,
+  afterContent,
   rangeLabel,
   rangeDays = 1,
   rangeStart,
@@ -676,8 +676,6 @@ export function CostStats({
 
         {!loading && stats && (
           <>
-            {beforeCharts}
-
             <div className="grid gap-4 lg:grid-cols-3">
               <TrendCard
                 title={t("costStats.spend")}
@@ -909,6 +907,8 @@ export function CostStats({
                 </div>
               </div>
             </div>
+
+            {afterContent}
           </>
         )}
       </CardContent>
