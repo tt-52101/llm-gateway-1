@@ -21,6 +21,7 @@ from app.domain.log import (
     LogCostStatsResponse,
     LogCostSummary,
     LogCostTrendPoint,
+    ModelCallStats,
     ModelProviderStats,
     ModelStats,
     RequestLogCreate,
@@ -709,7 +710,22 @@ class SQLAlchemyLogRepository(LogRepository):
     async def get_cost_stats(self, query: LogCostStatsQuery) -> LogCostStatsResponse:
         # In-progress rows have no final status, usage, or cost. Counting them
         # here would incorrectly classify them as successful requests.
-        conditions = [RequestLogORM.is_completed.is_(True)]
+        # A trace can also contain failed retry-attempt rows. Dashboard stats
+        # count one client call per trace, so only the earliest (root) row is
+        # included.
+        earlier_log = aliased(RequestLogORM)
+        is_trace_root = or_(
+            RequestLogORM.trace_id.is_(None),
+            RequestLogORM.trace_id == "",
+            ~select(earlier_log.id)
+            .where(
+                earlier_log.trace_id == RequestLogORM.trace_id,
+                earlier_log.id < RequestLogORM.id,
+            )
+            .correlate(RequestLogORM)
+            .exists(),
+        )
+        conditions = [RequestLogORM.is_completed.is_(True), is_trace_root]
         tz_offset_minutes = int(query.tz_offset_minutes or 0)
 
         if query.start_time:
@@ -743,11 +759,21 @@ class SQLAlchemyLogRepository(LogRepository):
         sum_in_tokens = func.coalesce(func.sum(RequestLogORM.input_tokens), 0)
         sum_out_tokens = func.coalesce(func.sum(RequestLogORM.output_tokens), 0)
 
-        error_condition = RequestLogORM.response_status >= 400
-        sum_error = func.coalesce(func.sum(case((error_condition, 1), else_=0)), 0)
+        success_condition = and_(
+            RequestLogORM.response_status >= 200,
+            RequestLogORM.response_status < 400,
+        )
+        sum_success = func.coalesce(
+            func.sum(case((success_condition, 1), else_=0)), 0
+        )
+        sum_failure = func.coalesce(
+            func.sum(case((success_condition, 0), else_=1)), 0
+        )
 
         summary_stmt = select(
             func.count().label("request_count"),
+            sum_success.label("success_count"),
+            sum_failure.label("failure_count"),
             sum_total.label("total_cost"),
             sum_input.label("input_cost"),
             sum_output.label("output_cost"),
@@ -758,8 +784,14 @@ class SQLAlchemyLogRepository(LogRepository):
             summary_stmt = summary_stmt.where(where_clause)
 
         summary_row = (await self.session.execute(summary_stmt)).mappings().one()
+        request_count = int(summary_row["request_count"] or 0)
+        success_count = int(summary_row["success_count"] or 0)
+        failure_count = int(summary_row["failure_count"] or 0)
         summary = LogCostSummary(
-            request_count=int(summary_row["request_count"] or 0),
+            request_count=request_count,
+            success_count=success_count,
+            failure_count=failure_count,
+            success_rate=success_count / request_count if request_count > 0 else 0.0,
             total_cost=float(summary_row["total_cost"] or 0),
             input_cost=float(summary_row["input_cost"] or 0),
             output_cost=float(summary_row["output_cost"] or 0),
@@ -848,7 +880,8 @@ class SQLAlchemyLogRepository(LogRepository):
                 sum_output.label("output_cost"),
                 sum_in_tokens.label("input_tokens"),
                 sum_out_tokens.label("output_tokens"),
-                sum_error.label("error_count"),
+                sum_failure.label("error_count"),
+                sum_success.label("success_count"),
             )
             .group_by(bucket_start_utc_expr)
             .order_by(bucket_start_utc_expr)
@@ -870,10 +903,7 @@ class SQLAlchemyLogRepository(LogRepository):
                 input_tokens=int(r["input_tokens"] or 0),
                 output_tokens=int(r["output_tokens"] or 0),
                 error_count=int(r["error_count"] or 0),
-                success_count=max(
-                    0,
-                    int(r["request_count"] or 0) - int(r["error_count"] or 0),
-                ),
+                success_count=int(r["success_count"] or 0),
             )
             for r in trend_rows
         ]
@@ -940,11 +970,70 @@ class SQLAlchemyLogRepository(LogRepository):
             for r in model_tokens_rows
         ]
 
+        provider_name_expr = func.coalesce(RequestLogORM.provider_name, "-")
+        model_name_expr = func.coalesce(
+            RequestLogORM.target_model,
+            RequestLogORM.requested_model,
+            "-",
+        )
+        stream_ttfb = case(
+            (
+                and_(
+                    RequestLogORM.is_stream.is_(True),
+                    RequestLogORM.first_byte_delay_ms.isnot(None),
+                ),
+                RequestLogORM.first_byte_delay_ms,
+            )
+        )
+        model_call_stmt = (
+            select(
+                provider_name_expr.label("provider_name"),
+                model_name_expr.label("model_name"),
+                func.count().label("request_count"),
+                sum_success.label("success_count"),
+                sum_failure.label("failure_count"),
+                func.avg(stream_ttfb).label("avg_first_byte_time_ms"),
+                func.max(stream_ttfb).label("max_first_byte_time_ms"),
+            )
+            .group_by(provider_name_expr, model_name_expr)
+            .order_by(func.count().desc(), provider_name_expr, model_name_expr)
+        )
+        if where_clause is not None:
+            model_call_stmt = model_call_stmt.where(where_clause)
+        model_call_rows = (
+            (await self.session.execute(model_call_stmt)).mappings().all()
+        )
+        model_call_stats = []
+        for row in model_call_rows:
+            total = int(row["request_count"] or 0)
+            successes = int(row["success_count"] or 0)
+            model_call_stats.append(
+                ModelCallStats(
+                    provider_name=row["provider_name"] or "-",
+                    model_name=row["model_name"] or "-",
+                    request_count=total,
+                    success_count=successes,
+                    failure_count=int(row["failure_count"] or 0),
+                    success_rate=successes / total if total > 0 else 0.0,
+                    avg_first_byte_time_ms=(
+                        float(row["avg_first_byte_time_ms"])
+                        if row["avg_first_byte_time_ms"] is not None
+                        else None
+                    ),
+                    max_first_byte_time_ms=(
+                        float(row["max_first_byte_time_ms"])
+                        if row["max_first_byte_time_ms"] is not None
+                        else None
+                    ),
+                )
+            )
+
         return LogCostStatsResponse(
             summary=summary,
             trend=trend,
             by_model=by_model,
             by_model_tokens=by_model_tokens,
+            model_call_stats=model_call_stats,
         )
 
     async def get_model_stats(
