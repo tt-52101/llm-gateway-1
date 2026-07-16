@@ -86,3 +86,109 @@ async def test_get_cost_stats_grouping(db_session):
     assert stats_prov.by_model[0].total_cost == 5.0
     assert stats_prov.by_model[1].requested_model == "target-Y"
     assert stats_prov.by_model[1].total_cost == 2.0
+
+
+@pytest.mark.asyncio
+async def test_get_cost_stats_call_health_and_stream_ttfb(db_session):
+    repo = SQLAlchemyLogRepository(db_session)
+    now = datetime.now(timezone.utc)
+
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
+        target_model="model-a",
+        provider_name="provider-a",
+        response_status=200,
+        first_byte_delay_ms=100,
+        is_stream=True,
+        is_completed=True,
+        trace_id="success-stream",
+    ))
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
+        target_model="model-a",
+        provider_name="provider-a",
+        response_status=204,
+        first_byte_delay_ms=900,
+        is_stream=False,
+        is_completed=True,
+        trace_id="success-non-stream",
+    ))
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
+        target_model="model-a",
+        provider_name="provider-a",
+        response_status=500,
+        first_byte_delay_ms=300,
+        is_stream=True,
+        is_completed=True,
+        trace_id="failed-with-retry",
+    ))
+    # A retry-attempt row shares the trace and must not be counted as a separate
+    # client call.
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
+        target_model="model-b",
+        provider_name="provider-b",
+        response_status=502,
+        first_byte_delay_ms=800,
+        is_stream=True,
+        is_completed=True,
+        trace_id="failed-with-retry",
+        retry_count=1,
+    ))
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
+        target_model="model-c",
+        provider_name="provider-c",
+        response_status=None,
+        is_stream=True,
+        is_completed=True,
+        trace_id="missing-status",
+    ))
+    # In-progress rows are excluded from all dashboard stats.
+    await repo.create(RequestLogCreate(
+        request_time=now,
+        requested_model="chat",
+        target_model="model-d",
+        provider_name="provider-d",
+        response_status=None,
+        is_stream=True,
+        is_completed=False,
+        trace_id="in-progress",
+    ))
+
+    stats = await repo.get_cost_stats(LogCostStatsQuery(
+        start_time=datetime(2000, 1, 1, tzinfo=timezone.utc),
+    ))
+
+    assert stats.summary.request_count == 4
+    assert stats.summary.success_count == 2
+    assert stats.summary.failure_count == 2
+    assert stats.summary.success_rate == 0.5
+
+    assert len(stats.model_call_stats) == 2
+    provider_a = next(
+        item for item in stats.model_call_stats
+        if item.provider_name == "provider-a"
+    )
+    assert provider_a.model_name == "model-a"
+    assert provider_a.request_count == 3
+    assert provider_a.success_count == 2
+    assert provider_a.failure_count == 1
+    assert provider_a.success_rate == pytest.approx(2 / 3)
+    assert provider_a.avg_first_byte_time_ms == 200
+    assert provider_a.max_first_byte_time_ms == 300
+
+    provider_c = next(
+        item for item in stats.model_call_stats
+        if item.provider_name == "provider-c"
+    )
+    assert provider_c.request_count == 1
+    assert provider_c.failure_count == 1
+    assert provider_c.avg_first_byte_time_ms is None
+    assert provider_c.max_first_byte_time_ms is None
